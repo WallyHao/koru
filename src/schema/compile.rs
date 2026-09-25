@@ -185,6 +185,7 @@ impl JsonSchema {
             required,
             additional_properties,
             keywords,
+            document: document.clone(),
         })
     }
 }

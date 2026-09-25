@@ -94,6 +94,7 @@ pub struct JsonSchema {
     required: BTreeSet<String>,
     additional_properties: bool,
     keywords: BTreeSet<&'static str>,
+    document: JsonValue,
 }
 impl JsonSchema {
     /// Compile a bounded schema document; unsupported keywords are rejected.
@@ -112,6 +113,11 @@ impl JsonSchema {
     /// Validation keywords used anywhere in this schema.
     pub fn keywords(&self) -> &BTreeSet<&'static str> {
         &self.keywords
+    }
+
+    /// The original bounded schema document, for protocol payloads.
+    pub fn document(&self) -> &JsonValue {
+        &self.document
     }
 
     /// Whether this schema accepts objects at its root and only objects.

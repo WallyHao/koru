@@ -101,7 +101,7 @@ impl AiService for FakeAiService {
             }
             for (name, arguments) in &scripted.calls {
                 events.call_tool(ToolCall {
-                    id: call_id,
+                    id: format!("call-{call_id}"),
                     name: name.clone(),
                     arguments: arguments.clone(),
                 })?;

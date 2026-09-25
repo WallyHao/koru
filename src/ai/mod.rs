@@ -73,8 +73,8 @@ pub struct ToolSpec {
 /// A tool invocation requested by a service.
 #[derive(Debug, Clone)]
 pub struct ToolCall {
-    /// Provider-assigned call identity, unique within the run.
-    pub id: u64,
+    /// Provider-assigned opaque call identity, unique within the run.
+    pub id: String,
     /// Declared tool name.
     pub name: String,
     /// JSON arguments.
