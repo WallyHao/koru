@@ -6,7 +6,7 @@ use crate::{
     schema::JsonSchema,
 };
 use mlua::{Table, Value};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 const DEFAULT_MAX_TURNS: u32 = 8;
 const MAX_MAX_TURNS: u32 = 32;
@@ -27,14 +27,7 @@ pub(super) fn read_json_options(options: &Table) -> mlua::Result<JsonRequest> {
         let (key, value) = pair?;
         match key.as_str() {
             "prompt" => prompt = Some(read_text(&value, "prompt")?),
-            "schema" => {
-                let document =
-                    json::to_json(&value, &JsonLimits::default()).map_err(runtime_error)?;
-                schema = Some(
-                    JsonSchema::compile(&document, &JsonLimits::default())
-                        .map_err(runtime_error)?,
-                );
-            }
+            "schema" => schema = Some(read_json_schema(&value)?),
             "mode" => mode = Some(read_text(&value, "mode")?),
             other => {
                 return Err(mlua::Error::RuntimeError(format!(
@@ -68,6 +61,35 @@ pub(super) fn read_json_options(options: &Table) -> mlua::Result<JsonRequest> {
             max_turns: 1,
         },
         schema,
+    })
+}
+
+fn read_json_schema(value: &Value) -> mlua::Result<JsonSchema> {
+    if let Some(name) = value.as_string() {
+        let name = name
+            .to_str()
+            .map_err(|_| mlua::Error::RuntimeError("schema name must be valid UTF-8".into()))?;
+        return match name.as_ref() {
+            "shell_proposal" => Ok(shell_proposal_schema().clone()),
+            other => Err(mlua::Error::RuntimeError(format!(
+                "unknown built-in JSON schema {other:?}"
+            ))),
+        };
+    }
+    let document = json::to_json(value, &JsonLimits::default()).map_err(runtime_error)?;
+    JsonSchema::compile(&document, &JsonLimits::default()).map_err(runtime_error)
+}
+
+fn shell_proposal_schema() -> &'static JsonSchema {
+    static SCHEMA: OnceLock<JsonSchema> = OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        let document = crate::json::parse(
+            br#"{"type":"object","properties":{"script":{"type":"string","minLength":1,"maxLength":65536},"cwd":{"type":"string","minLength":1,"maxLength":4096},"explanation":{"type":"string","minLength":1,"maxLength":1024}},"required":["script","cwd","explanation"],"additionalProperties":false}"#,
+            &JsonLimits::default(),
+        )
+        .expect("the built-in shell proposal schema is valid JSON");
+        JsonSchema::compile(&document, &JsonLimits::default())
+            .expect("the built-in shell proposal schema is supported")
     })
 }
 

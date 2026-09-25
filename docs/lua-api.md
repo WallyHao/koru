@@ -1,6 +1,6 @@
 # Koru Lua runtime API (version 1)
 
-Status: `koru.json` and `koru.ai` are implemented and available through
+Status: `koru.json`, `koru.ai`, and the approved Linux shell API are available through
 `koru <command>` with the selected provider. The bridge is tested with a
 deterministic fake service and recorded provider transports.
 
@@ -46,9 +46,11 @@ Malformed JSON, empty/refusal text, schema mismatch, and unsupported schema
 keywords fail with `validation`; an oversized response fails with
 `budget_exhausted`.
 
-`koru.shell.script(text, { cwd = ... })` is the planned effect API for the
-reference shell command. It returns `ProcessResult` or `nil, error` after the
-terminal approves the exact prepared action. `ProcessResult` contains
+`koru.shell.script(text, { cwd = ..., explanation = ... })` runs the exact
+script through one terminal approval and returns `ProcessResult` or `nil, error`.
+The cwd must name an existing directory. `stdout` and `stderr` are bounded UTF-8
+text; invalid byte sequences are replaced when the process result enters Lua.
+`ProcessResult` contains
 `exit_code` or `signal`, `stdout`, `stderr`, `stdout_truncated`, and
 `stderr_truncated`. Model-proposed scripts cannot add child environment values.
 
@@ -117,5 +119,6 @@ error. Errors name the tool and a JSON Pointer path.
 
 ## Not implemented
 
-Streaming, structured-output validation, and Lua terminal/process/file effects.
-See `docs/implementation.md` for details.
+Streaming and Lua file effects. Shell execution is supported on Linux only.
+`koru.ai.ask_json` uses prompt-and-validate; providers do not claim native
+structured-output capability. See `docs/implementation.md` for details.

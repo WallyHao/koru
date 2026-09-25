@@ -18,6 +18,7 @@ const SHELL: &str = "/bin/sh";
 pub(super) struct ShellRequest {
     script: String,
     cwd: PathBuf,
+    explanation: String,
 }
 
 pub(super) fn build_shell(lua: &Lua, in_tool: Rc<Cell<bool>>, pending: Pending) -> Result<Table> {
@@ -25,7 +26,7 @@ pub(super) fn build_shell(lua: &Lua, in_tool: Rc<Cell<bool>>, pending: Pending) 
         .create_table()
         .map_err(|cause| error::invalid(format!("cannot build koru.shell: {cause}")))?;
     let script = lua
-        .create_async_function(move |lua, options: Table| {
+        .create_async_function(move |lua, (script_text, options): (String, Table)| {
             let flag = Rc::clone(&in_tool);
             let slot = Rc::clone(&pending);
             async move {
@@ -34,7 +35,7 @@ pub(super) fn build_shell(lua: &Lua, in_tool: Rc<Cell<bool>>, pending: Pending) 
                         "host effects from a tool callback are not supported".to_owned(),
                     ));
                 }
-                let request = read_options(&options)?;
+                let request = read_options(script_text, &options)?;
                 *slot.borrow_mut() = Some(PendingRequest::Shell(request));
                 let response: Table = lua.yield_with(Value::Nil).await?;
                 if response.get::<bool>("ok")? {
@@ -58,7 +59,22 @@ pub(super) fn complete_shell(
     approval: &mut dyn ApprovalProvider,
 ) -> mlua::Result<Value> {
     let outcome = (|| {
+        if !cfg!(target_os = "linux") {
+            return Err(KoruError::new(
+                crate::error::ErrorCode::UnsupportedCapability,
+                "approved shell execution is currently supported only on Linux",
+            ));
+        }
+        context.ensure_active(std::time::Instant::now())?;
         let action = PreparedAction::shell(context, SHELL.into(), request.script, request.cwd)?;
+        if !request.explanation.is_empty() {
+            let escaped: String = request
+                .explanation
+                .chars()
+                .flat_map(char::escape_default)
+                .collect();
+            eprintln!("Plan: {escaped}");
+        }
         let decision = approval.decide(&action, context.deadline())?;
         let policy = Policy::new(1)?;
         let approved = Broker::authorize(
@@ -73,14 +89,17 @@ pub(super) fn complete_shell(
     response(lua, outcome)
 }
 
-fn read_options(options: &Table) -> mlua::Result<ShellRequest> {
-    let mut script = None;
+fn read_options(script: String, options: &Table) -> mlua::Result<ShellRequest> {
+    if script.len() > MAX_SCRIPT_BYTES {
+        return Err(mlua::Error::RuntimeError("`script` is too long".into()));
+    }
     let mut cwd = None;
+    let mut explanation = None;
     for pair in options.pairs::<String, Value>() {
         let (key, value) = pair?;
         match key.as_str() {
-            "script" => script = Some(bounded_text(&value, "script", MAX_SCRIPT_BYTES)?),
             "cwd" => cwd = Some(PathBuf::from(bounded_text(&value, "cwd", MAX_CWD_BYTES)?)),
+            "explanation" => explanation = Some(bounded_text(&value, "explanation", 1024)?),
             other => {
                 return Err(mlua::Error::RuntimeError(format!(
                     "unknown shell.script option {other:?}"
@@ -89,9 +108,9 @@ fn read_options(options: &Table) -> mlua::Result<ShellRequest> {
         }
     }
     Ok(ShellRequest {
-        script: script
-            .ok_or_else(|| mlua::Error::RuntimeError("shell.script needs a `script`".into()))?,
+        script,
         cwd: cwd.ok_or_else(|| mlua::Error::RuntimeError("shell.script needs a `cwd`".into()))?,
+        explanation: explanation.unwrap_or_default(),
     })
 }
 
@@ -116,8 +135,8 @@ fn response(lua: &Lua, outcome: Result<ProcessResult>) -> mlua::Result<Value> {
             let value = lua.create_table()?;
             value.set("exit_code", result.exit_code)?;
             value.set("signal", result.signal)?;
-            value.set("stdout", lua.create_string(&result.stdout)?)?;
-            value.set("stderr", lua.create_string(&result.stderr)?)?;
+            value.set("stdout", String::from_utf8_lossy(&result.stdout).as_ref())?;
+            value.set("stderr", String::from_utf8_lossy(&result.stderr).as_ref())?;
             value.set("stdout_truncated", result.stdout_truncated)?;
             value.set("stderr_truncated", result.stderr_truncated)?;
             envelope.set("result", value)?;

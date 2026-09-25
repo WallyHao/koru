@@ -17,15 +17,7 @@ return {
     return koru.ai.ask_json({
       prompt = "propose",
       mode = "prompt_validate",
-      schema = {
-        type = "object",
-        properties = {
-          script = { type = "string", maxLength = 32 },
-          cwd = { type = "string", maxLength = 64 },
-        },
-        required = { "script", "cwd" },
-        additionalProperties = false,
-      },
+      schema = "shell_proposal",
     })
   end,
 }
@@ -51,7 +43,7 @@ fn run(answer: &str) -> koru::error::Result<JsonValue> {
 
 #[test]
 fn ask_json_returns_only_parsed_schema_validated_data() {
-    let value = run(r#"{"script":"printf ok","cwd":"/tmp"}"#).unwrap();
+    let value = run(r#"{"script":"printf ok","cwd":"/tmp","explanation":"show files"}"#).unwrap();
     let JsonValue::Object(fields) = value else {
         panic!("expected object")
     };
@@ -59,14 +51,21 @@ fn ask_json_returns_only_parsed_schema_validated_data() {
         fields.get("script"),
         Some(&JsonValue::String("printf ok".into()))
     );
+    assert_eq!(
+        fields.get("explanation"),
+        Some(&JsonValue::String("show files".into()))
+    );
 }
 
 #[test]
 fn ask_json_rejects_malformed_or_schema_invalid_answers() {
     for answer in [
         "```json\n{}\n```",
-        r#"{"script":"ok"}"#,
-        r#"{"script":"ok","cwd":"/tmp","extra":true}"#,
+        r#"{"script":"ok","cwd":"/tmp"}"#,
+        r#"{"script":"ok","cwd":"/tmp","explanation":"x","extra":true}"#,
+        r#"{"script":"","cwd":"/tmp","explanation":"x"}"#,
+        r#"{"script":"x","cwd":"/tmp","explanation":""}"#,
+        r#"{"script":"x","cwd":"/tmp","explanation":"x"} trailing"#,
         "",
     ] {
         assert_eq!(
@@ -75,4 +74,13 @@ fn ask_json_rejects_malformed_or_schema_invalid_answers() {
             "{answer:?}"
         );
     }
+}
+
+#[test]
+fn shell_proposal_schema_rejects_oversized_scripts() {
+    let answer = format!(
+        "{{\"script\":\"{}\",\"cwd\":\"/tmp\",\"explanation\":\"x\"}}",
+        "x".repeat(65 * 1024)
+    );
+    assert_eq!(run(&answer).unwrap_err().code(), ErrorCode::Validation);
 }
