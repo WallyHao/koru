@@ -1,11 +1,14 @@
 //! Approved process execution keeps arguments, output, and credentials bounded.
 use koru::{
     effects::execute_process,
+    error::ErrorCode,
     permissions::{Broker, Decision, Environment, Policy, PreparedAction},
     runtime::{ExecutionContext, Limits},
 };
 use std::{
+    fs,
     path::PathBuf,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -155,4 +158,110 @@ fn changed_executable_cannot_use_an_earlier_approval() {
         execute_process(approved, &context).unwrap_err().code(),
         koru::error::ErrorCode::StateConflict
     );
+}
+
+#[test]
+fn changed_working_directory_cannot_use_an_earlier_approval() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("cwd");
+    fs::create_dir(&cwd).unwrap();
+    let context = context();
+    let action =
+        PreparedAction::shell(&context, "/bin/sh".into(), "pwd".into(), cwd.clone()).unwrap();
+    let approved = Broker::authorize(
+        action,
+        &context,
+        &Policy::new(1).unwrap(),
+        Decision::ApproveOnce,
+        Instant::now(),
+    )
+    .unwrap();
+    fs::rename(&cwd, root.path().join("moved")).unwrap();
+    fs::create_dir(&cwd).unwrap();
+    assert_eq!(
+        execute_process(approved, &context).unwrap_err().code(),
+        ErrorCode::StateConflict
+    );
+}
+
+#[test]
+fn drains_large_stdout_and_stderr_without_deadlock() {
+    let context = context();
+    let action = PreparedAction::shell(
+        &context,
+        "/bin/sh".into(),
+        "printf '%070000d' 0 & printf '%070000d' 0 >&2; wait".into(),
+        std::env::temp_dir(),
+    )
+    .unwrap();
+    let approved = Broker::authorize(
+        action,
+        &context,
+        &Policy::new(1).unwrap(),
+        Decision::ApproveOnce,
+        Instant::now(),
+    )
+    .unwrap();
+    let result = execute_process(approved, &context).unwrap();
+    assert_eq!(result.stdout.len(), 65536);
+    assert_eq!(result.stderr.len(), 65536);
+    assert!(result.stdout_truncated && result.stderr_truncated);
+}
+
+#[test]
+fn timeout_kills_shell_descendants() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("leaked");
+    let limits = Limits {
+        wall_time: Duration::from_millis(50),
+        ..Limits::default()
+    };
+    let context = ExecutionContext::new("demo", [8; 32], limits, Instant::now()).unwrap();
+    let script = format!("(sleep 1; printf leaked > '{}') & wait", marker.display());
+    let action =
+        PreparedAction::shell(&context, "/bin/sh".into(), script, root.path().into()).unwrap();
+    let approved = Broker::authorize(
+        action,
+        &context,
+        &Policy::new(1).unwrap(),
+        Decision::ApproveOnce,
+        Instant::now(),
+    )
+    .unwrap();
+    assert_eq!(
+        execute_process(approved, &context).unwrap_err().code(),
+        ErrorCode::Timeout
+    );
+    thread::sleep(Duration::from_millis(1100));
+    assert!(
+        !marker.exists(),
+        "a shell descendant survived group termination"
+    );
+}
+
+#[test]
+fn exhausted_effect_budget_never_dispatches() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("ran");
+    let limits = Limits {
+        effects: 0,
+        ..Limits::default()
+    };
+    let context = ExecutionContext::new("demo", [9; 32], limits, Instant::now()).unwrap();
+    let script = format!("printf ran > '{}'", marker.display());
+    let action =
+        PreparedAction::shell(&context, "/bin/sh".into(), script, root.path().into()).unwrap();
+    let approved = Broker::authorize(
+        action,
+        &context,
+        &Policy::new(1).unwrap(),
+        Decision::ApproveOnce,
+        Instant::now(),
+    )
+    .unwrap();
+    assert_eq!(
+        execute_process(approved, &context).unwrap_err().code(),
+        ErrorCode::BudgetExhausted
+    );
+    assert!(!marker.exists());
 }

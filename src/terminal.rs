@@ -17,20 +17,11 @@ pub fn approve(action: &PreparedAction, deadline: Instant) -> Result<Decision> {
     }
     let mut output = io::stderr().lock();
     preview(action, &mut output)?;
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .ok_or_else(timeout)?;
-    let (sender, receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
+    read_before_deadline(deadline, move || {
         let mut answer = String::new();
-        let outcome = io::stdin().lock().take(16).read_line(&mut answer);
-        let _ = sender.send(outcome.map(|_| answer));
-    });
-    let answer = receiver
-        .recv_timeout(remaining)
-        .map_err(|_| timeout())?
-        .map_err(|error| KoruError::io("cannot read approval", error))?;
-    Ok(parse_answer(&answer))
+        io::stdin().lock().take(16).read_line(&mut answer)?;
+        Ok(answer)
+    })
 }
 
 /// Injectable approval boundary used by terminal fixtures.
@@ -84,6 +75,24 @@ fn parse_answer(answer: &str) -> Decision {
     }
 }
 
+fn read_before_deadline(
+    deadline: Instant,
+    read: impl FnOnce() -> io::Result<String> + Send + 'static,
+) -> Result<Decision> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or_else(timeout)?;
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let _ = sender.send(read());
+    });
+    let answer = receiver
+        .recv_timeout(remaining)
+        .map_err(|_| timeout())?
+        .map_err(|error| KoruError::io("cannot read approval", error))?;
+    Ok(parse_answer(&answer))
+}
+
 fn noninteractive() -> KoruError {
     KoruError::new(
         ErrorCode::PermissionDenied,
@@ -93,4 +102,28 @@ fn noninteractive() -> KoruError {
 
 fn timeout() -> KoruError {
     KoruError::new(ErrorCode::Timeout, "approval deadline exceeded")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_before_deadline;
+    use crate::error::ErrorCode;
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn blocked_approval_input_obeys_the_deadline() {
+        let (sender, receiver) = mpsc::channel::<()>();
+        let started = Instant::now();
+        let error = read_before_deadline(started + Duration::from_millis(20), move || {
+            let _ = receiver.recv();
+            Ok("yes\n".to_owned())
+        })
+        .unwrap_err();
+        drop(sender);
+        assert_eq!(error.code(), ErrorCode::Timeout);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 }

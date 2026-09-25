@@ -34,6 +34,7 @@ fn script_requests_do_not_grant_direct_process_access() {
             .code(),
         ErrorCode::PermissionDenied
     );
+    assert_eq!(context.usage().unwrap().effects, 0);
 }
 #[test]
 fn exact_grants_bind_source_policy_arguments_and_environment() {

@@ -72,3 +72,20 @@ fn denial_and_redirected_input_never_authorize() {
     );
     assert!(output.is_empty());
 }
+
+#[test]
+fn eof_is_denial() {
+    let mut input = Cursor::new(Vec::<u8>::new());
+    let mut output = Vec::new();
+    assert!(matches!(
+        decide(
+            &action(),
+            &mut input,
+            &mut output,
+            true,
+            Instant::now() + Duration::from_secs(1)
+        )
+        .unwrap(),
+        Decision::Deny
+    ));
+}
