@@ -294,6 +294,56 @@ fn shell_example_checks_and_missing_task_fails_before_provider_setup() {
 }
 
 #[test]
+fn commit_example_checks_without_running_git_or_configuring_a_provider() {
+    let root = tempfile::tempdir().unwrap();
+    let commands = root.path().join("koru/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("commit.lua"),
+        include_str!("../examples/commands/commit.lua"),
+    )
+    .unwrap();
+    let check = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .args(["check", "commit"])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(String::from_utf8_lossy(&check.stdout).contains("commit: ok"));
+
+    let missing_model = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .env("XDG_CACHE_HOME", root.path())
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENCODE_API_KEY")
+        .arg("commit")
+        .output()
+        .unwrap();
+    assert!(!missing_model.status.success());
+    assert!(String::from_utf8_lossy(&missing_model.stderr).contains("select a model"));
+
+    fs::write(
+        root.path().join("koru/config.toml"),
+        "schema_version = 1\nprovider = \"deepseek\"\nmodel = \"deepseek-chat\"\n",
+    )
+    .unwrap();
+    let missing_key = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .env("XDG_CACHE_HOME", root.path())
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENCODE_API_KEY")
+        .arg("commit")
+        .output()
+        .unwrap();
+    assert!(!missing_key.status.success());
+    assert!(String::from_utf8_lossy(&missing_key.stderr).contains("DEEPSEEK_API_KEY"));
+}
+
+#[test]
 fn shell_task_fails_on_model_selection_before_any_provider_request() {
     let root = tempfile::tempdir().unwrap();
     let commands = root.path().join("koru/commands");

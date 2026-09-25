@@ -27,11 +27,13 @@ use std::{
 mod drive;
 mod effects;
 mod encode;
+mod git;
 mod options;
 
 use drive::drive_agent;
 use effects::{ShellRequest, build_shell, complete_shell};
 use encode::encode_result;
+use git::{GitSnapshotState, build_git, complete_snapshot};
 use options::{JsonRequest, read_json_options, read_run_options};
 
 /// Bounded queue capacity for the owner/service channels.
@@ -52,6 +54,7 @@ enum PendingRequest {
     Ai(AiRequest),
     Json(Box<JsonRequest>),
     Shell(ShellRequest),
+    GitSnapshot,
 }
 
 type Pending = Rc<RefCell<Option<PendingRequest>>>;
@@ -74,6 +77,7 @@ pub(super) fn run(
     let json_table = json::install(&lua)?;
     let in_tool = Rc::new(Cell::new(false));
     let pending: Pending = Rc::new(RefCell::new(None));
+    let git_snapshot: GitSnapshotState = Rc::new(RefCell::new(None));
     let specs: Rc<BTreeMap<String, ToolSpec>> = Rc::new(
         tools
             .iter()
@@ -82,6 +86,12 @@ pub(super) fn run(
     );
     let ai_table = build_ai(&lua, specs, Rc::clone(&in_tool), Rc::clone(&pending))?;
     let shell_table = build_shell(&lua, Rc::clone(&in_tool), Rc::clone(&pending))?;
+    let git_table = build_git(
+        &lua,
+        Rc::clone(&in_tool),
+        Rc::clone(&pending),
+        Rc::clone(&git_snapshot),
+    )?;
     let koru = lua
         .create_table()
         .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
@@ -90,6 +100,8 @@ pub(super) fn run(
     koru.set("ai", ai_table)
         .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
     koru.set("shell", shell_table)
+        .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
+    koru.set("git", git_table)
         .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
     let argument = json::from_json(&lua, args)?;
     let workflow = lua
@@ -120,6 +132,11 @@ pub(super) fn run(
             }
             PendingRequest::Shell(request) => complete_shell(&lua, request, &context, approval)
                 .map_err(|cause| error::invalid(format!("cannot return shell result: {cause}")))?,
+            PendingRequest::GitSnapshot => {
+                complete_snapshot(&lua, &context, approval, &git_snapshot).map_err(|cause| {
+                    error::invalid(format!("cannot return Git snapshot: {cause}"))
+                })?
+            }
         };
         value = workflow
             .resume::<Value>(encoded)

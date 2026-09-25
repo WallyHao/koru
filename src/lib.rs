@@ -6,6 +6,7 @@ pub mod credentials;
 pub mod declaration;
 pub mod effects;
 pub mod error;
+pub(crate) mod git;
 pub mod json;
 pub mod lua;
 pub mod paths;

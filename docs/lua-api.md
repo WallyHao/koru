@@ -1,8 +1,9 @@
 # Koru Lua runtime API (version 1)
 
-Status: `koru.json`, `koru.ai`, and the approved Linux shell API are available through
-`koru <command>` with the selected provider. The bridge is tested with a
-deterministic fake service and recorded provider transports.
+Status: `koru.json`, `koru.ai`, the approved Linux shell API, and the Linux staged Git
+snapshot/planning API are available through `koru <command>` with the selected
+provider. The bridge is tested with deterministic fake services and recorded
+provider transports.
 
 ## `koru.json`
 
@@ -53,6 +54,19 @@ text; invalid byte sequences are replaced when the process result enters Lua.
 `ProcessResult` contains
 `exit_code` or `signal`, `stdout`, `stderr`, `stdout_truncated`, and
 `stderr_truncated`. Model-proposed scripts cannot add child environment values.
+
+`koru.git.snapshot()` requests one approval for a fixed, read-only
+`git diff --cached` action. On approval it returns bounded staged change
+summaries, opaque change IDs, and bounded diff excerpts; file paths remain on
+the Rust side. The API is Linux-only and returns `nil, error` if approval is
+denied or the staged diff cannot be read.
+
+`koru.git.validate(plan)` accepts a model proposal against the current
+in-memory snapshot. It requires every snapshot change ID exactly once and
+validates each Conventional Commit subject and rationale before producing a
+plan ID. The snapshot and plan IDs are tied to the staged diff and validated
+grouping. The `commit` example prints this plan for review. It does not write
+the Git index, worktree, refs, or commit objects.
 
 Nested AI calls from a tool callback are rejected. AI calls fail with a typed
 Lua error on provider or tool failure; the workflow error is categorized as

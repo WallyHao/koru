@@ -71,6 +71,7 @@ fn read_json_schema(value: &Value) -> mlua::Result<JsonSchema> {
             .map_err(|_| mlua::Error::RuntimeError("schema name must be valid UTF-8".into()))?;
         return match name.as_ref() {
             "shell_proposal" => Ok(shell_proposal_schema().clone()),
+            "commit_plan" => Ok(commit_plan_schema().clone()),
             other => Err(mlua::Error::RuntimeError(format!(
                 "unknown built-in JSON schema {other:?}"
             ))),
@@ -78,6 +79,19 @@ fn read_json_schema(value: &Value) -> mlua::Result<JsonSchema> {
     }
     let document = json::to_json(value, &JsonLimits::default()).map_err(runtime_error)?;
     JsonSchema::compile(&document, &JsonLimits::default()).map_err(runtime_error)
+}
+
+fn commit_plan_schema() -> &'static JsonSchema {
+    static SCHEMA: OnceLock<JsonSchema> = OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        let document = crate::json::parse(
+            br#"{"type":"object","properties":{"groups":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","properties":{"changes":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"string","minLength":1,"maxLength":24}},"message":{"type":"string","minLength":1,"maxLength":72},"rationale":{"type":"string","maxLength":512}},"required":["changes","message"],"additionalProperties":false}}},"required":["groups"],"additionalProperties":false}"#,
+            &JsonLimits::default(),
+        )
+        .expect("the built-in commit plan schema is valid JSON");
+        JsonSchema::compile(&document, &JsonLimits::default())
+            .expect("the built-in commit plan schema is supported")
+    })
 }
 
 fn shell_proposal_schema() -> &'static JsonSchema {
