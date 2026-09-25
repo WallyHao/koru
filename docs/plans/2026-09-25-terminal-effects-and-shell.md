@@ -1,5 +1,7 @@
 # Terminal Effects and `koru shell` Implementation Plan
 
+> Historical plan based on `d5b2f4f`. Workflow CLI dispatch and the library-level terminal/process pieces have since landed. Use `2026-09-25-shell-command.md` for the remaining shell release work and `2026-09-25-commit-command.md` for the Git command.
+
 > **For Codex:** Use `${SUPERPOWERS_SKILLS_ROOT}/skills/collaboration/executing-plans/SKILL.md` to implement this plan task-by-task.
 
 **Goal:** Make one installed Lua workflow executable through the CLI and ship `koru shell` with explicit approval, bounded execution, and no model-authored authorization.
