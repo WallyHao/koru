@@ -51,6 +51,37 @@ a `run` callback. The callback receives the arguments as a Koru JSON value and
 returns a JSON value. Registration is immutable per agent run: `koru.ai.run`
 selects a subset by name, and a model cannot add or redefine tools.
 
+### Supported schema subset
+
+`parameters` and `result` are compiled once to a Koru-owned schema. Only this
+subset is accepted; any other keyword fails declaration validation with the
+keyword and JSON path named.
+
+- `type`: a string or array of strings from `object`, `array`, `string`,
+  `boolean`, `integer`, `number`, `null`. A JSON integer satisfies `integer` or
+  `number`.
+- object: `properties`, `required`, `additionalProperties` (boolean, default
+  `true`).
+- array: `items`, `minItems`, `maxItems`.
+- string: `minLength`, `maxLength` (UTF-8 bytes).
+- number/integer: `minimum`, `maximum` (finite and ordered; integer bounds must
+  be whole numbers in the safe range).
+- any type: `enum` (unique, non-empty, matching the declared type) and the
+  `description` annotation.
+
+`parameters` must describe an object at its root. `$ref`, `$schema`, `$id`,
+`oneOf`, `anyOf`, `allOf`, `not`, `patternProperties`, `propertyNames`,
+`pattern`, `format`, `default`, `examples`, and every other unknown keyword are
+rejected rather than ignored.
+
+### Validation timing
+
+The owner validates model-supplied arguments against `parameters` before the
+callback runs; a mismatch fails the run as a `validation` error and the callback
+is never invoked. When `result` is declared, the callback's return value is
+validated before it is forwarded, and a mismatch fails the run as a `validation`
+error. Errors name the tool and a JSON Pointer path.
+
 ## Bridge behavior
 
 - The workflow runs in a Lua coroutine owned by one VM thread. `koru.ai` calls
@@ -60,11 +91,17 @@ selects a subset by name, and a model cannot add or redefine tools.
 - A service runs on its own thread and communicates over bounded channels. The
   owner checks cancellation and the deadline on every wait tick and stops the run
   without resuming the workflow.
+- A terminal state (cancelled, timed out, budget exhausted, or a validation
+  failure) returns immediately without waiting for the service thread; the
+  service is detached and the process reaps it when it returns. A normally
+  completed service is reaped within `AI_SERVICE_JOIN_GRACE` (250 ms); a service
+  that neither completes nor returns within that grace is reported as a
+  `timeout`. The target from a cancellation signal to returning is 50 ms.
 - Model-request and tool-call budgets are charged from the shared
   `ExecutionContext`; turns are enforced by the service and the request cap.
+  Tool dispatch is bounded by the tool-call budget, not just by queue capacity.
 
 ## Not implemented
 
-Real providers and credentials, JSON-schema and argument-value validation,
-streaming, retry classification, and terminal/process effects. See
-`docs/implementation.md` for details.
+Real providers and credentials, streaming, retry classification, and
+terminal/process effects. See `docs/implementation.md` for details.

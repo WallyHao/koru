@@ -43,13 +43,15 @@ Each `tools` entry is a table:
 | --- | --- | --- | --- |
 | `name` | yes | string | `[a-z][a-z0-9_]*`, at most 64 bytes, unique. |
 | `description` | yes | string | 1 to 1024 bytes, no control characters. |
-| `parameters` | yes | object | JSON schema document under the JSON limits. |
-| `result` | no | object | Optional JSON schema document. |
+| `parameters` | yes | object | JSON schema for the arguments; must describe an object. |
+| `result` | no | object | Optional JSON schema for the callback result. |
 | `run` | yes | function | Callback invoked with JSON arguments; returns JSON. |
 
 Tool names are checked against the declaration; `koru.ai.run` may offer only a
-declared subset. Callbacks are never invoked by `koru check`. See
-`docs/lua-api.md` for the runtime `koru.json`/`koru.ai` behavior.
+declared subset. Callbacks are never invoked by `koru check`. `parameters` and
+`result` are compiled to the documented schema subset; unsupported keywords fail
+validation. See `docs/lua-api.md` for the subset and the runtime
+`koru.json`/`koru.ai` behavior.
 
 ## Argument entries
 

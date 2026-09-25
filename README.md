@@ -27,6 +27,6 @@ return {
 }
 ```
 
-`koru --inspect NAME` reports the SHA-256 source-bundle digest and module count without evaluating Lua. `koru check [NAME]` evaluates and validates declarations under the bounded loader; without a name it checks every discovered command. It grants no permissions and performs no effects. See [docs/declaration.md](docs/declaration.md) for the API version 1 field reference and [docs/lua-api.md](docs/lua-api.md) for the `koru.json`/`koru.ai` runtime API.
+`koru --inspect NAME` reports the SHA-256 source-bundle digest and module count without evaluating Lua. `koru check [NAME]` evaluates and validates declarations, including tool schemas compiled to a documented JSON Schema subset, under the bounded loader; without a name it checks every discovered command. It grants no permissions and performs no effects. See [docs/declaration.md](docs/declaration.md) for the API version 1 field reference and [docs/lua-api.md](docs/lua-api.md) for the `koru.json`/`koru.ai` runtime API.
 
 Implementation status, current limits, and the next release gates are in [docs/implementation.md](docs/implementation.md). Plans are under [docs/plans/](docs/plans/).
