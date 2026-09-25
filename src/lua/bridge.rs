@@ -27,7 +27,7 @@ mod options;
 
 use drive::drive_agent;
 use encode::encode_result;
-use options::read_run_options;
+use options::{JsonRequest, read_json_options, read_run_options};
 
 /// Bounded queue capacity for the owner/service channels.
 const CHANNEL_CAPACITY: usize = 8;
@@ -43,7 +43,12 @@ pub const AI_SERVICE_JOIN_GRACE: Duration = Duration::from_millis(250);
 pub const CANCELLATION_LATENCY_TARGET: Duration = Duration::from_millis(50);
 
 /// The AI request a suspended workflow call left for the owner to service.
-type Pending = Rc<RefCell<Option<AiRequest>>>;
+enum PendingRequest {
+    Ai(AiRequest),
+    Json(JsonRequest),
+}
+
+type Pending = Rc<RefCell<Option<PendingRequest>>>;
 
 /// Execute one loaded workflow, bridging AI calls to `service`.
 pub(super) fn run(
@@ -85,13 +90,27 @@ pub(super) fn run(
         .resume::<Value>((koru, argument))
         .map_err(|error| error::map(&context, error, "workflow failed"))?;
     while workflow.status() == ThreadStatus::Resumable {
-        let request = pending
+        let pending_request = pending
             .borrow_mut()
             .take()
             .ok_or_else(|| error::invalid("workflow suspended without an AI request"))?;
+        let request = match &pending_request {
+            PendingRequest::Ai(request) => request.clone(),
+            PendingRequest::Json(request) => request.request.clone(),
+        };
         let result = drive_agent(&service, request, &context, &tools, &lua, &in_tool)?;
-        let encoded = encode_result(&lua, &result)
-            .map_err(|error| error::invalid(format!("cannot return the AI result: {error}")))?;
+        context.reserve(
+            crate::runtime::Resources {
+                bytes: result.text.len() as u64,
+                ..crate::runtime::Resources::ZERO
+            },
+            std::time::Instant::now(),
+        )?;
+        let encoded = match pending_request {
+            PendingRequest::Ai(_) => encode_result(&lua, &result)
+                .map_err(|error| error::invalid(format!("cannot return the AI result: {error}")))?,
+            PendingRequest::Json(request) => encode_json_result(&lua, &result, &request.schema)?,
+        };
         value = workflow
             .resume::<Value>(encoded)
             .map_err(|error| error::map(&context, error, "workflow failed"))?;
@@ -124,7 +143,7 @@ fn build_ai(
                     tools: Vec::new(),
                     max_turns: 1,
                 };
-                ai_call(lua, flag, slot, request).await
+                ai_call(lua, flag, slot, PendingRequest::Ai(request)).await
             }
         })
         .map_err(|error| error::invalid(format!("cannot build koru.ai.ask: {error}")))?;
@@ -139,11 +158,25 @@ fn build_ai(
             let slot = Rc::clone(&run_pending);
             async move {
                 let request = read_run_options(&options, &specs)?;
-                ai_call(lua, flag, slot, request).await
+                ai_call(lua, flag, slot, PendingRequest::Ai(request)).await
             }
         })
         .map_err(|error| error::invalid(format!("cannot build koru.ai.run: {error}")))?;
     ai.set("run", run_fn)
+        .map_err(|error| error::invalid(format!("cannot build koru.ai: {error}")))?;
+    let json_flag = Rc::clone(&in_tool);
+    let json_pending = Rc::clone(&pending);
+    let ask_json = lua
+        .create_async_function(move |lua, options: Table| {
+            let flag = Rc::clone(&json_flag);
+            let slot = Rc::clone(&json_pending);
+            async move {
+                let request = read_json_options(&options)?;
+                ai_call(lua, flag, slot, PendingRequest::Json(request)).await
+            }
+        })
+        .map_err(|error| error::invalid(format!("cannot build koru.ai.ask_json: {error}")))?;
+    ai.set("ask_json", ask_json)
         .map_err(|error| error::invalid(format!("cannot build koru.ai: {error}")))?;
     Ok(ai)
 }
@@ -152,7 +185,7 @@ async fn ai_call(
     lua: Lua,
     flag: Rc<Cell<bool>>,
     pending: Pending,
-    request: AiRequest,
+    request: PendingRequest,
 ) -> mlua::Result<Value> {
     if flag.get() {
         return Err(mlua::Error::RuntimeError(
@@ -161,4 +194,32 @@ async fn ai_call(
     }
     *pending.borrow_mut() = Some(request);
     lua.yield_with(Value::Nil).await
+}
+
+fn encode_json_result(
+    lua: &Lua,
+    result: &crate::ai::AiResult,
+    schema: &crate::schema::JsonSchema,
+) -> Result<Value> {
+    const MAX_STRUCTURED_RESPONSE_BYTES: usize = 256 * 1024;
+    if result.text.is_empty() {
+        return Err(error::invalid("structured model response is empty"));
+    }
+    if result.text.len() > MAX_STRUCTURED_RESPONSE_BYTES {
+        return Err(crate::error::KoruError::new(
+            crate::error::ErrorCode::BudgetExhausted,
+            "structured model response exceeds the byte limit",
+        ));
+    }
+    let data =
+        crate::json::parse(result.text.as_bytes(), &JsonLimits::default()).map_err(|parse| {
+            error::invalid(format!("structured model response: {}", parse.message()))
+        })?;
+    schema.validate(&data).map_err(|validation| {
+        error::invalid(format!(
+            "structured model response: {}",
+            validation.message()
+        ))
+    })?;
+    json::from_json(lua, &data)
 }

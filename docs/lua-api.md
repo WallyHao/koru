@@ -37,6 +37,21 @@ Both return an `AiResult` table with `text`, `finish_reason`, `model`,
 `finish_reason` is one of `stop`, `length`, `tool_calls`, `content_filter`, or
 `other`.
 
+`koru.ai.ask_json({ prompt = ..., schema = ..., mode = "prompt_validate" })`
+makes one tool-free request using an explicit prompt-and-validate fallback. Koru
+adds the bounded schema to the prompt, parses exactly one JSON value from the
+answer, validates it with the documented schema subset, and returns only the
+validated Lua value. This mode does not claim provider-native structured output.
+Malformed JSON, empty/refusal text, schema mismatch, and unsupported schema
+keywords fail with `validation`; an oversized response fails with
+`budget_exhausted`.
+
+`koru.shell.script(text, { cwd = ... })` is the planned effect API for the
+reference shell command. It returns `ProcessResult` or `nil, error` after the
+terminal approves the exact prepared action. `ProcessResult` contains
+`exit_code` or `signal`, `stdout`, `stderr`, `stdout_truncated`, and
+`stderr_truncated`. Model-proposed scripts cannot add child environment values.
+
 Nested AI calls from a tool callback are rejected. AI calls fail with a typed
 Lua error on provider or tool failure; the workflow error is categorized as
 `provider_failure`, `tool_failure`, `cancelled`, `timeout`, or

@@ -53,6 +53,10 @@ declared subset. Callbacks are never invoked by `koru check`. `parameters` and
 validation. See `docs/lua-api.md` for the subset and the runtime
 `koru.json`/`koru.ai` behavior.
 
+Structured workflow results use `koru.ai.ask_json` with an explicit schema and
+`prompt_validate` mode. The schema is compiled with the same Koru-owned subset
+as tool schemas; it does not grant a provider capability or an effect.
+
 ## Argument entries
 
 | Field | Required | Type | Notes |

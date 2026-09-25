@@ -1,11 +1,75 @@
 //! Parse `koru.ai.ask`/`koru.ai.run` options into a bounded agent request.
-use crate::ai::{AiRequest, ToolSpec};
+use super::super::json;
+use crate::{
+    ai::{AiRequest, ToolSpec},
+    json::{self as json_codec, JsonLimits},
+    schema::JsonSchema,
+};
 use mlua::{Table, Value};
 use std::collections::BTreeMap;
 
 const DEFAULT_MAX_TURNS: u32 = 8;
 const MAX_MAX_TURNS: u32 = 32;
-const MAX_PROMPT_BYTES: usize = 256 * 1024;
+pub(super) const MAX_PROMPT_BYTES: usize = 256 * 1024;
+
+/// One explicitly prompt-and-validate structured request.
+pub(super) struct JsonRequest {
+    pub(super) request: AiRequest,
+    pub(super) schema: JsonSchema,
+}
+
+/// Parse `koru.ai.ask_json` options and build its bounded fallback prompt.
+pub(super) fn read_json_options(options: &Table) -> mlua::Result<JsonRequest> {
+    let mut prompt = None;
+    let mut schema = None;
+    let mut mode = None;
+    for pair in options.pairs::<String, Value>() {
+        let (key, value) = pair?;
+        match key.as_str() {
+            "prompt" => prompt = Some(read_text(&value, "prompt")?),
+            "schema" => {
+                let document =
+                    json::to_json(&value, &JsonLimits::default()).map_err(runtime_error)?;
+                schema = Some(
+                    JsonSchema::compile(&document, &JsonLimits::default())
+                        .map_err(runtime_error)?,
+                );
+            }
+            "mode" => mode = Some(read_text(&value, "mode")?),
+            other => {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "unknown ai.ask_json option {other:?}"
+                )));
+            }
+        }
+    }
+    let prompt =
+        prompt.ok_or_else(|| mlua::Error::RuntimeError("ai.ask_json needs a `prompt`".into()))?;
+    let schema =
+        schema.ok_or_else(|| mlua::Error::RuntimeError("ai.ask_json needs a `schema`".into()))?;
+    if mode.as_deref() != Some("prompt_validate") {
+        return Err(mlua::Error::RuntimeError(
+            "ai.ask_json supports only mode `prompt_validate`".into(),
+        ));
+    }
+    let schema_text = json_codec::emit(schema.document());
+    let request_prompt = format!(
+        "{prompt}\n\nReturn exactly one JSON value matching this schema. Do not use Markdown fences or add prose.\nSchema: {schema_text}"
+    );
+    if request_prompt.len() > MAX_PROMPT_BYTES {
+        return Err(mlua::Error::RuntimeError(
+            "structured prompt is too long".into(),
+        ));
+    }
+    Ok(JsonRequest {
+        request: AiRequest {
+            prompt: request_prompt,
+            tools: Vec::new(),
+            max_turns: 1,
+        },
+        schema,
+    })
+}
 
 /// Parse the `koru.ai.run` option table, rejecting unknown tools and options.
 pub(super) fn read_run_options(
@@ -19,16 +83,7 @@ pub(super) fn read_run_options(
         let (key, value) = pair?;
         match key.as_str() {
             "prompt" => {
-                let text = value
-                    .as_string()
-                    .ok_or_else(|| mlua::Error::RuntimeError("`prompt` must be a string".into()))?;
-                let text = text.to_str().map_err(|_| {
-                    mlua::Error::RuntimeError("`prompt` must be valid UTF-8".into())
-                })?;
-                if text.len() > MAX_PROMPT_BYTES {
-                    return Err(mlua::Error::RuntimeError("`prompt` is too long".into()));
-                }
-                prompt = Some(text.as_ref().to_owned());
+                prompt = Some(read_text(&value, "prompt")?);
             }
             "tools" => {
                 let list = value
@@ -73,4 +128,21 @@ pub(super) fn read_run_options(
         tools,
         max_turns,
     })
+}
+
+fn read_text(value: &Value, field: &str) -> mlua::Result<String> {
+    let text = value
+        .as_string()
+        .ok_or_else(|| mlua::Error::RuntimeError(format!("`{field}` must be a string")))?;
+    let text = text
+        .to_str()
+        .map_err(|_| mlua::Error::RuntimeError(format!("`{field}` must be valid UTF-8")))?;
+    if text.len() > MAX_PROMPT_BYTES {
+        return Err(mlua::Error::RuntimeError(format!("`{field}` is too long")));
+    }
+    Ok(text.as_ref().to_owned())
+}
+
+fn runtime_error(error: crate::error::KoruError) -> mlua::Error {
+    mlua::Error::RuntimeError(error.message().to_owned())
 }
