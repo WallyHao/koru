@@ -1,6 +1,7 @@
 //! Deterministic in-process AI service used by tests and prototypes.
 use super::{
-    AiRequest, AiResult, AiService, FinishReason, ServiceError, ServiceEvents, ToolCall, Usage,
+    AiRequest, AiResult, AiService, FinishReason, ServiceCapabilities, ServiceError, ServiceEvents,
+    ToolCall, Usage,
 };
 use crate::json::JsonValue;
 use std::{thread, time::Duration};
@@ -26,6 +27,7 @@ pub struct FakeAiService {
     model: String,
     delay: Option<Duration>,
     failure: Option<ServiceError>,
+    capabilities: ServiceCapabilities,
 }
 impl FakeAiService {
     /// A service that immediately answers without tools.
@@ -36,6 +38,7 @@ impl FakeAiService {
             model: "fake-model".to_owned(),
             delay: None,
             failure: None,
+            capabilities: ServiceCapabilities::tool_capable("fake"),
         }
     }
     /// A service that issues the given rounds before answering.
@@ -48,6 +51,11 @@ impl FakeAiService {
     /// Override the reported model identity.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+    /// Override the advertised adapter capabilities.
+    pub fn capabilities(mut self, capabilities: ServiceCapabilities) -> Self {
+        self.capabilities = capabilities;
         self
     }
     /// Wait before doing any work, to exercise cancellation while suspended.
@@ -65,6 +73,10 @@ impl FakeAiService {
 }
 
 impl AiService for FakeAiService {
+    fn capabilities(&self) -> ServiceCapabilities {
+        self.capabilities.clone()
+    }
+
     fn run(
         &mut self,
         request: AiRequest,

@@ -36,7 +36,14 @@ impl JsonSchema {
         let mut array_keywords = false;
         let mut string_keywords = false;
         let mut number_keywords = false;
+        let mut keywords = BTreeSet::new();
         for (keyword, value) in entries {
+            if let Some(name) = super::SUPPORTED_KEYWORDS
+                .iter()
+                .find(|name| **name == keyword.as_str())
+            {
+                keywords.insert(*name);
+            }
             match keyword.as_str() {
                 "type" => types = Some(read_types(value, path)?),
                 "enum" => enum_values = Some(read_enum(value, path)?),
@@ -97,6 +104,12 @@ impl JsonSchema {
                     ));
                 }
             }
+        }
+        if let Some(items) = &items {
+            keywords.extend(items.keywords.iter().copied());
+        }
+        for schema in properties.values() {
+            keywords.extend(schema.keywords.iter().copied());
         }
         if enum_values.is_some() && types.is_none() {
             types = Some(enum_types(enum_values.as_deref().unwrap_or_default()));
@@ -171,6 +184,7 @@ impl JsonSchema {
             properties,
             required,
             additional_properties,
+            keywords,
         })
     }
 }

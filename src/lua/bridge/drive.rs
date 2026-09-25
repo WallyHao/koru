@@ -3,8 +3,8 @@ use super::super::{command::ToolEntry, error, json};
 use super::{AI_SERVICE_JOIN_GRACE, CHANNEL_CAPACITY, WAIT_TICK};
 use crate::{
     ai::{
-        AiResult, AiService, ChannelEvents, Event, Reply, ServiceError, ServiceErrorKind, ToolCall,
-        ToolResult,
+        AiRequest, AiResult, AiService, ChannelEvents, Event, Reply, ServiceCapabilities,
+        ServiceError, ServiceErrorKind, ToolCall, ToolResult,
     },
     error::{ErrorCode, KoruError, Result},
     json::JsonLimits,
@@ -25,12 +25,22 @@ use std::{
 /// Run one bounded agent request, servicing tool calls until the service ends.
 pub(super) fn drive_agent(
     service: &Arc<Mutex<Box<dyn AiService>>>,
-    request: crate::ai::AiRequest,
+    request: AiRequest,
     context: &ExecutionContext,
     tools: &BTreeMap<String, ToolEntry>,
     lua: &Lua,
     in_tool: &Rc<Cell<bool>>,
 ) -> Result<AiResult> {
+    let capabilities = match service.lock() {
+        Ok(service) => service.capabilities(),
+        Err(_) => {
+            return Err(error::coded(
+                ErrorCode::ProviderFailure,
+                "the AI service is unavailable",
+            ));
+        }
+    };
+    preflight(&request, &capabilities)?;
     context.reserve(
         Resources {
             model_requests: 1,
@@ -116,6 +126,34 @@ pub(super) fn drive_agent(
     let _ = worker.join();
     context.ensure_active(Instant::now())?;
     outcome.map_err(service_error)
+}
+
+/// Reject a request the adapter cannot serve before any budget is charged.
+fn preflight(request: &AiRequest, capabilities: &ServiceCapabilities) -> Result<()> {
+    if request.tools.is_empty() {
+        return Ok(());
+    }
+    if !capabilities.tools {
+        return Err(error::coded(
+            ErrorCode::UnsupportedCapability,
+            format!(
+                "provider {:?} does not support tools",
+                capabilities.provider
+            ),
+        ));
+    }
+    for spec in &request.tools {
+        if !capabilities.supports_keywords(spec.parameters.keywords()) {
+            return Err(error::coded(
+                ErrorCode::UnsupportedCapability,
+                format!(
+                    "tool {:?} schema exceeds the capabilities of provider {:?}",
+                    spec.name, capabilities.provider
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A tool-dispatch failure: report it to the service, or stop the whole run.

@@ -62,6 +62,22 @@ impl JsonType {
     }
 }
 
+/// Validation keywords the Koru schema subset understands.
+pub const SUPPORTED_KEYWORDS: [&str; 12] = [
+    "type",
+    "enum",
+    "minimum",
+    "maximum",
+    "minLength",
+    "maxLength",
+    "items",
+    "minItems",
+    "maxItems",
+    "properties",
+    "required",
+    "additionalProperties",
+];
+
 /// A compiled, bounded JSON schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JsonSchema {
@@ -77,6 +93,7 @@ pub struct JsonSchema {
     properties: BTreeMap<String, JsonSchema>,
     required: BTreeSet<String>,
     additional_properties: bool,
+    keywords: BTreeSet<&'static str>,
 }
 impl JsonSchema {
     /// Compile a bounded schema document; unsupported keywords are rejected.
@@ -90,6 +107,11 @@ impl JsonSchema {
     /// Validate one value, returning a path-qualified error on mismatch.
     pub fn validate(&self, value: &JsonValue) -> crate::error::Result<()> {
         self.validate_at(value, "")
+    }
+
+    /// Validation keywords used anywhere in this schema.
+    pub fn keywords(&self) -> &BTreeSet<&'static str> {
+        &self.keywords
     }
 
     /// Whether this schema accepts objects at its root and only objects.

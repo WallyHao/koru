@@ -5,8 +5,48 @@
 //! tool calls through [`ServiceEvents`], which the VM owner implements.
 pub mod fake;
 
-use crate::{json::JsonValue, schema::JsonSchema};
-use std::sync::mpsc::{Receiver, SyncSender};
+use crate::{
+    json::JsonValue,
+    schema::{JsonSchema, SUPPORTED_KEYWORDS},
+};
+use std::{
+    collections::BTreeSet,
+    sync::mpsc::{Receiver, SyncSender},
+};
+
+/// Adapter-owned facts about what a service can do for one run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceCapabilities {
+    /// Provider identity used in diagnostics.
+    pub provider: String,
+    /// Whether the service can dispatch model tool calls.
+    pub tools: bool,
+    /// Whether the service supports structured output.
+    pub structured_output: bool,
+    /// Validation keywords the service accepts in tool schemas.
+    pub schema_keywords: BTreeSet<&'static str>,
+    /// Effort variants the service accepts.
+    pub variants: Vec<String>,
+    /// Whether conversations use a stable session header.
+    pub sessions: bool,
+}
+impl ServiceCapabilities {
+    /// A tool-capable service that accepts the full Koru schema subset.
+    pub fn tool_capable(provider: impl Into<String>) -> Self {
+        Self {
+            provider: provider.into(),
+            tools: true,
+            structured_output: false,
+            schema_keywords: SUPPORTED_KEYWORDS.into_iter().collect(),
+            variants: Vec::new(),
+            sessions: false,
+        }
+    }
+    /// Whether every keyword the schema uses is supported.
+    pub fn supports_keywords(&self, keywords: &BTreeSet<&'static str>) -> bool {
+        keywords.is_subset(&self.schema_keywords)
+    }
+}
 
 /// One bounded agent request.
 #[derive(Debug, Clone)]
@@ -132,6 +172,9 @@ impl ServiceError {
 
 /// The worker side of one agent run; implemented by provider adapters and fakes.
 pub trait AiService: Send + 'static {
+    /// Immutable adapter capabilities for this run.
+    fn capabilities(&self) -> ServiceCapabilities;
+
     /// Run one bounded agent loop, dispatching tools through `events`.
     fn run(
         &mut self,
