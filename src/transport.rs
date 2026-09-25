@@ -187,6 +187,12 @@ pub trait Transport: Send + Sync {
     fn send(&self, request: &Request) -> std::result::Result<Response, TransportError>;
 }
 
+impl<T: Transport + ?Sized> Transport for std::sync::Arc<T> {
+    fn send(&self, request: &Request) -> std::result::Result<Response, TransportError> {
+        (**self).send(request)
+    }
+}
+
 /// The production transport backed by `ureq` and rustls.
 pub struct UreqTransport {
     agent: ureq::Agent,
