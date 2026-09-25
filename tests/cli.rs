@@ -96,3 +96,54 @@ fn redirected_help_has_no_ansi_sequences() {
     assert!(!output.stdout.contains(&0x1b));
     assert!(!output.stderr.contains(&0x1b));
 }
+
+#[test]
+fn model_selection_persists_and_validates_variants() {
+    let root = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_koru"))
+            .env("XDG_CONFIG_HOME", root.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let initial = run(&["model"]);
+    assert!(initial.status.success());
+    let stdout = String::from_utf8_lossy(&initial.stdout);
+    assert!(stdout.contains("provider: (none)"));
+    assert!(stdout.contains("services: deepseek, opencode, opencode-go"));
+
+    let selected = run(&["model", "deepseek/deepseek-chat"]);
+    assert!(selected.status.success());
+    let stdout = String::from_utf8_lossy(&selected.stdout);
+    assert!(stdout.contains("provider: deepseek"));
+    assert!(stdout.contains("model: deepseek-chat"));
+    let config = fs::read_to_string(root.path().join("koru/config.toml")).unwrap();
+    assert!(config.contains("schema_version = 1"));
+
+    assert!(!run(&["variant", "high"]).status.success());
+    let moved = run(&["model", "opencode-go/glm"]);
+    assert!(moved.status.success());
+    assert!(run(&["variant", "high"]).status.success());
+    let cleared = run(&["model", "deepseek/again"]);
+    assert!(cleared.status.success());
+    assert!(String::from_utf8_lossy(&cleared.stdout).contains("variant: (none)"));
+    assert!(String::from_utf8_lossy(&cleared.stderr).contains("cleared"));
+}
+
+#[test]
+fn unknown_service_and_update_are_reported() {
+    let root = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_koru"))
+            .env("XDG_CONFIG_HOME", root.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(!run(&["model", "nope/x"]).status.success());
+    assert!(!run(&["variant"]).status.success());
+    let update = run(&["model", "update", "deepseek"]);
+    assert!(!update.status.success());
+    assert!(String::from_utf8_lossy(&update.stderr).contains("unsupported_capability"));
+}
