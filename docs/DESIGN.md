@@ -293,14 +293,14 @@ These conventions adapt architectural principles from `/home/wallyhao/Workspace/
 
 ## Remaining implementation decisions
 
-These choices must be resolved with evidence before their affected gate can pass:
+These choices are resolved in the corresponding increment, or still require evidence before their affected gate can pass:
 
-- Exact Lua declaration field spelling, argument/help schema, and ergonomic constructors; the ownership, API version, and result/error semantics above are fixed.
-- Pinned Rig/mlua versions, Lua backend, executor/channel implementation, and whether a worker process is needed to meet cancellation bounds.
-- Initial tested Zen/Go models, per-protocol variant mapping, and fallback metadata sources when catalog capability fields are absent.
-- Numeric defaults/hard ceilings, supported-platform process cleanup, and documented cancellation-latency targets.
-- Minimum tested Git version for reference transactions, signing-helper compatibility, and subsequent hooks/worktree/index-format support.
-- Measured release binary size target.
+- Resolved: the API version 1 declaration field spelling and the argument/help schema (`docs/declaration.md`). Ergonomic constructors remain open.
+- Resolved: the Lua binding and backend are `mlua = 0.12.1` with vendored Lua 5.5.1 and an explicit library allowlist. The Rig version, executor/channel implementation, and whether a worker process is needed for cancellation bounds remain open.
+- Resolved (initial values only): execution and Lua defaults/hard ceilings. Supported-platform process cleanup and documented cancellation-latency targets remain open; the declaration hook observes cancellation within one instruction quantum.
+- Open: initial tested Zen/Go models, per-protocol variant mapping, and fallback metadata sources when catalog capability fields are absent.
+- Open: minimum tested Git version for reference transactions, signing-helper compatibility, and subsequent hooks/worktree/index-format support.
+- Open: measured release binary size target; the current stripped measurement is 1,436,224 bytes.
 
 Permission authority, shared budgets, preview/execution identity, staged-snapshot preservation, and recovery reconciliation are required architectural contracts rather than optional follow-up work.
 

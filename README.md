@@ -2,16 +2,17 @@
 
 Koru is a planned Rust CLI for repeatable AI-assisted workflows written in Lua. The intended v1 behavior and its release gates are specified in [docs/DESIGN.md](docs/DESIGN.md).
 
-This repository currently contains the first foundation increment. It can discover installed command filenames and inspect an immutable, bounded command/module source bundle. It does not evaluate Lua, call a model, execute a process, or create Git commits. Commands and `koru check` return an explicit unsupported-capability error until their runtimes are implemented.
+This repository contains two foundation increments. Koru discovers installed command filenames, captures an immutable bounded command/module source bundle, and evaluates a script's declaration in a restricted Lua VM under instruction, memory, and wall-clock limits. It does not call a model, execute a process, write files, or create Git commits. Workflow execution returns an explicit unsupported-capability error until its runtime is implemented.
 
-## Build and try the foundation
+## Build and try it
 
-Use Rust 1.98 or newer (the version used for the current checks):
+Use Rust 1.88 or newer (the current checks run on 1.98):
 
 ```sh
 cargo build --locked
 cargo run --locked --
 cargo run --locked -- --inspect hello
+cargo run --locked -- check hello
 just check
 ```
 
@@ -19,9 +20,13 @@ Install command sources under `$XDG_CONFIG_HOME/koru/commands/` or `~/.config/ko
 
 ```lua
 -- koru-module: shared.format
-return { api_version = 1, description = "Example", run = function(koru, args) end }
+return {
+  api_version = 1,
+  description = "Example",
+  run = function(koru, args) end,
+}
 ```
 
-The declaration above is illustrative; the current binary only captures its bytes. Inspect reports the SHA-256 source-bundle digest and module count. It does not validate declaration syntax.
+`koru --inspect NAME` reports the SHA-256 source-bundle digest and module count without evaluating Lua. `koru check [NAME]` evaluates and validates declarations under the bounded loader; without a name it checks every discovered command. It grants no permissions and performs no effects. See [docs/declaration.md](docs/declaration.md) for the API version 1 field reference.
 
-Implementation status, current limits, and the next release gates are in [docs/implementation.md](docs/implementation.md). The first increment's task plan is in [docs/plans/2026-09-25-foundation.md](docs/plans/2026-09-25-foundation.md).
+Implementation status, current limits, and the next release gates are in [docs/implementation.md](docs/implementation.md). Plans are under [docs/plans/](docs/plans/).
