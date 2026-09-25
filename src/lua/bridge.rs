@@ -50,7 +50,7 @@ pub const CANCELLATION_LATENCY_TARGET: Duration = Duration::from_millis(50);
 /// The AI request a suspended workflow call left for the owner to service.
 enum PendingRequest {
     Ai(AiRequest),
-    Json(JsonRequest),
+    Json(Box<JsonRequest>),
     Shell(ShellRequest),
 }
 
@@ -196,7 +196,7 @@ fn build_ai(
             let slot = Rc::clone(&json_pending);
             async move {
                 let request = read_json_options(&options)?;
-                ai_call(lua, flag, slot, PendingRequest::Json(request)).await
+                ai_call(lua, flag, slot, PendingRequest::Json(Box::new(request))).await
             }
         })
         .map_err(|error| error::invalid(format!("cannot build koru.ai.ask_json: {error}")))?;
