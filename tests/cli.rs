@@ -103,6 +103,9 @@ fn model_selection_persists_and_validates_variants() {
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_koru"))
             .env("XDG_CONFIG_HOME", root.path())
+            .env("XDG_CACHE_HOME", root.path())
+            .env_remove("DEEPSEEK_API_KEY")
+            .env_remove("OPENCODE_API_KEY")
             .args(args)
             .output()
             .unwrap()
@@ -137,6 +140,9 @@ fn unknown_service_and_update_are_reported() {
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_koru"))
             .env("XDG_CONFIG_HOME", root.path())
+            .env("XDG_CACHE_HOME", root.path())
+            .env_remove("DEEPSEEK_API_KEY")
+            .env_remove("OPENCODE_API_KEY")
             .args(args)
             .output()
             .unwrap()
@@ -145,5 +151,29 @@ fn unknown_service_and_update_are_reported() {
     assert!(!run(&["variant"]).status.success());
     let update = run(&["model", "update", "deepseek"]);
     assert!(!update.status.success());
-    assert!(String::from_utf8_lossy(&update.stderr).contains("unsupported_capability"));
+    assert!(String::from_utf8_lossy(&update.stderr).contains("DEEPSEEK_API_KEY"));
+}
+
+#[test]
+fn selection_is_checked_against_the_cached_catalog() {
+    let root = tempfile::tempdir().unwrap();
+    let cache_dir = root.path().join("koru/catalog");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(
+        cache_dir.join("deepseek.json"),
+        r#"{"schema_version":1,"fetched_at":1,"document":{"data":[{"id":"known"}]}}"#,
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_koru"))
+            .env("XDG_CONFIG_HOME", root.path())
+            .env("XDG_CACHE_HOME", root.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let absent = run(&["model", "deepseek/absent"]);
+    assert!(!absent.status.success());
+    assert!(String::from_utf8_lossy(&absent.stderr).contains("not in the cached"));
+    assert!(run(&["model", "deepseek/known"]).status.success());
 }

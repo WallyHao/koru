@@ -9,6 +9,7 @@ pub mod json;
 pub mod lua;
 pub mod paths;
 pub mod permissions;
+pub mod persist;
 pub mod provider;
 pub mod runtime;
 pub mod schema;

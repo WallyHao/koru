@@ -2,15 +2,21 @@
 use clap::Parser;
 use koru::{
     config::Config,
+    credentials::{Credentials, DEEPSEEK_API_KEY, OPENCODE_API_KEY, ProcessEnvironment},
     error::{ErrorCode, KoruError, Result},
     lua::LoadedCommand,
     paths::UserPaths,
-    provider::catalog::{Catalog, ServiceId, UnavailableCatalogSource, declared_variants},
+    provider::{
+        Catalog, CatalogCache, CatalogSource, DeepSeekAdapter, OpenCodeAdapter, OpenCodeSurface,
+        ServiceId, catalog::declared_variants,
+    },
     runtime::{ExecutionContext, Limits},
     source::{SourceBundle, SourceLimits, discover},
+    transport::{Transport, TransportLimits, UreqTransport},
 };
 use std::{
     path::Path,
+    sync::Arc,
     time::{Instant, SystemTime},
 };
 
@@ -96,12 +102,12 @@ fn run_model(paths: &UserPaths, args: &[String]) -> Result<()> {
             Ok(())
         }
         [first] if *first == "update" => Err(update_usage()),
-        ["update", "--all"] => run_model_update(&ServiceId::ALL, &path),
+        ["update", "--all"] => run_model_update(&ServiceId::ALL, paths),
         ["update", service] => {
             let service = parse_service(service)?;
-            run_model_update(&[service], &path)
+            run_model_update(&[service], paths)
         }
-        [selector] => select_model(&path, selector),
+        [selector] => select_model(paths, selector),
         _ => Err(KoruError::new(
             ErrorCode::Validation,
             "model accepts at most one selector",
@@ -109,7 +115,8 @@ fn run_model(paths: &UserPaths, args: &[String]) -> Result<()> {
     }
 }
 
-fn select_model(path: &Path, selector: &str) -> Result<()> {
+fn select_model(paths: &UserPaths, selector: &str) -> Result<()> {
+    let path = Config::path(paths);
     let (service, model) = match selector.split_once('/') {
         Some((service, model)) => {
             if model.is_empty() {
@@ -122,8 +129,22 @@ fn select_model(path: &Path, selector: &str) -> Result<()> {
         }
         None => (parse_service(selector)?, None),
     };
+    if let Some(model) = &model
+        && CatalogCache::new(&paths.cache).cached_model(service, model) == Some(false)
+    {
+        return Err(KoruError::new(
+            ErrorCode::Validation,
+            format!(
+                "model {}/{} is not in the cached {} catalog; run `koru model update {}`",
+                service.name(),
+                model,
+                service.name(),
+                service.name()
+            ),
+        ));
+    }
     let mut notice = None;
-    let updated = Config::update(path, |config| {
+    let updated = Config::update(&path, |config| {
         config.provider = Some(service.name().to_owned());
         if let Some(model) = model.clone() {
             config.model = Some(model);
@@ -147,30 +168,80 @@ fn select_model(path: &Path, selector: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_model_update(services: &[ServiceId], path: &Path) -> Result<()> {
+fn run_model_update(services: &[ServiceId], paths: &UserPaths) -> Result<()> {
+    let cache = CatalogCache::new(&paths.cache);
+    let credentials = Credentials::from_environment(&ProcessEnvironment);
+    let transport: Arc<dyn Transport> = Arc::new(UreqTransport::new(TransportLimits::default()));
+    let fetched_at = unix_seconds();
     let mut catalog = Catalog::default();
-    let fetched_at = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|value| value.as_secs())
-        .unwrap_or(0);
     for service in services {
-        catalog.refresh(*service, &UnavailableCatalogSource, fetched_at)?;
-        for entry in catalog.entries(*service) {
-            println!("{}: {}", service.name(), entry.id);
+        let source = catalog_source(*service, &credentials, &transport)?;
+        if let Err(error) = cache.refresh(&mut catalog, *service, source.as_ref(), fetched_at) {
+            if catalog.entries(*service).is_empty() {
+                return Err(error);
+            }
+            eprintln!(
+                "{}: {}: {}",
+                service.name(),
+                error.code().as_str(),
+                error.message()
+            );
         }
     }
-    let selected = Config::load(path)?;
+    let selected = Config::load(&Config::path(paths))?;
     if let (Some(provider), Some(model)) = (selected.provider.as_deref(), selected.model.as_deref())
         && let Some(service) = ServiceId::parse(provider)
-        && catalog.model(service, model).is_none()
         && services.contains(&service)
+        && catalog.model(service, model).is_none()
     {
         return Err(KoruError::new(
             ErrorCode::Validation,
             format!("selected model {provider}/{model} is not in the fetched catalog"),
         ));
     }
+    for service in services {
+        for entry in catalog.entries(*service) {
+            println!("{}: {}", service.name(), entry.id);
+        }
+    }
     Ok(())
+}
+
+fn catalog_source(
+    service: ServiceId,
+    credentials: &Credentials,
+    transport: &Arc<dyn Transport>,
+) -> Result<Arc<dyn CatalogSource>> {
+    let source: Arc<dyn CatalogSource> = match service {
+        ServiceId::DeepSeek => Arc::new(DeepSeekAdapter::new(
+            Arc::clone(transport),
+            credentials.require(DEEPSEEK_API_KEY)?,
+            String::new(),
+            None,
+        )),
+        ServiceId::OpenCode => Arc::new(OpenCodeAdapter::new(
+            OpenCodeSurface::Zen,
+            Arc::clone(transport),
+            credentials.require(OPENCODE_API_KEY)?,
+            String::new(),
+            None,
+        )),
+        ServiceId::OpenCodeGo => Arc::new(OpenCodeAdapter::new(
+            OpenCodeSurface::Go,
+            Arc::clone(transport),
+            credentials.require(OPENCODE_API_KEY)?,
+            String::new(),
+            None,
+        )),
+    };
+    Ok(source)
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0)
 }
 
 fn run_variant(paths: &UserPaths, args: &[String]) -> Result<()> {

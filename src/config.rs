@@ -10,22 +10,17 @@
 use crate::{
     error::{ErrorCode, KoruError, Result},
     paths::UserPaths,
+    persist::{FileLock, write_atomic},
 };
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
+    fs,
     path::{Path, PathBuf},
-    thread,
-    time::{Duration, Instant, SystemTime},
 };
 
 /// The only configuration schema version this build understands.
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 /// Longest accepted provider, model, or variant string.
 pub const MAX_VALUE_BYTES: usize = 256;
-/// How long a writer waits for the configuration lock before failing.
-const LOCK_WAIT: Duration = Duration::from_millis(1000);
-const LOCK_RETRY: Duration = Duration::from_millis(5);
 
 /// The selected provider/model/variant. Missing values mean "not selected".
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -137,7 +132,7 @@ impl Config {
 
     /// Read-modify-write under the scoped lock, replacing the file atomically.
     pub fn update(path: &Path, change: impl FnOnce(&mut Config)) -> Result<Self> {
-        let _lock = Lock::acquire(path)?;
+        let _lock = FileLock::acquire(path)?;
         let mut config = Self::load(path)?;
         change(&mut config);
         config.check_semantics()?;
@@ -243,74 +238,4 @@ fn parse_error(line: usize, detail: impl Into<String>) -> KoruError {
             format!("invalid config line {line}: {detail}"),
         )
     }
-}
-
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|error| KoruError::at_path(parent.to_path_buf(), error))?;
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|value| value.as_nanos())
-        .unwrap_or(0);
-    let temp = parent.join(format!(".config.{}.{nanos}.tmp", std::process::id()));
-    let result = (|| -> Result<()> {
-        let mut file =
-            fs::File::create(&temp).map_err(|error| KoruError::at_path(temp.clone(), error))?;
-        file.write_all(bytes)
-            .map_err(|error| KoruError::at_path(temp.clone(), error))?;
-        file.sync_all()
-            .map_err(|error| KoruError::at_path(temp.clone(), error))?;
-        fs::rename(&temp, path).map_err(|error| KoruError::at_path(path.to_path_buf(), error))
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
-}
-
-/// An exclusively created lock file removed when the guard drops.
-struct Lock {
-    path: PathBuf,
-}
-impl Lock {
-    fn acquire(target: &Path) -> Result<Self> {
-        let path = lock_path(target);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| KoruError::at_path(parent.to_path_buf(), error))?;
-        }
-        let deadline = Instant::now() + LOCK_WAIT;
-        loop {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
-                    let _ = writeln!(file, "{}", std::process::id());
-                    return Ok(Self { path });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if Instant::now() >= deadline {
-                        return Err(KoruError::new(
-                            ErrorCode::StateConflict,
-                            format!(
-                                "configuration lock {} is held; remove it if no writer is running",
-                                path.display()
-                            ),
-                        ));
-                    }
-                    thread::sleep(LOCK_RETRY);
-                }
-                Err(error) => return Err(KoruError::at_path(path.clone(), error)),
-            }
-        }
-    }
-}
-impl Drop for Lock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn lock_path(target: &Path) -> PathBuf {
-    let mut name = target.as_os_str().to_owned();
-    name.push(".lock");
-    PathBuf::from(name)
 }
