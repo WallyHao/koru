@@ -5,12 +5,26 @@ use crate::{
     declaration::CommandDeclaration,
     error::{ErrorCode, KoruError, Result},
     json::JsonValue,
+    permissions::{Decision, PreparedAction},
     runtime::ExecutionContext,
     schema::JsonSchema,
     source::SourceBundle,
 };
 use mlua::{Function, Value};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Instant};
+
+/// Host-owned source of approval decisions for prepared effects.
+pub trait ApprovalProvider {
+    /// Decide whether one exact prepared action may run before `deadline`.
+    fn decide(&mut self, action: &PreparedAction, deadline: Instant) -> Result<Decision>;
+}
+
+struct TerminalApproval;
+impl ApprovalProvider for TerminalApproval {
+    fn decide(&mut self, action: &PreparedAction, deadline: Instant) -> Result<Decision> {
+        crate::terminal::approve(action, deadline)
+    }
+}
 
 /// A declared tool callback retained for VM-owner dispatch.
 pub(super) struct ToolEntry {
@@ -72,6 +86,16 @@ impl LoadedCommand {
     }
     /// Execute the workflow against a service and return its result as JSON.
     pub fn run(self, service: Box<dyn AiService>, args: &JsonValue) -> Result<JsonValue> {
-        bridge::run(self, service, args)
+        self.run_with_approval(service, args, &mut TerminalApproval)
+    }
+
+    /// Execute with an explicit host approval adapter.
+    pub fn run_with_approval(
+        self,
+        service: Box<dyn AiService>,
+        args: &JsonValue,
+        approval: &mut dyn ApprovalProvider,
+    ) -> Result<JsonValue> {
+        bridge::run(self, service, args, approval)
     }
 }

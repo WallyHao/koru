@@ -7,7 +7,10 @@
 //! dispatching registered callbacks serially while the workflow is suspended.
 //! The drive loop, option parsing, and result encoding live in submodules so
 //! each keeps one responsibility.
-use super::{command::LoadedCommand, error, json};
+use super::{
+    command::{ApprovalProvider, LoadedCommand},
+    error, json,
+};
 use crate::{
     ai::{AiRequest, AiService, ToolSpec},
     error::Result,
@@ -22,10 +25,12 @@ use std::{
 };
 
 mod drive;
+mod effects;
 mod encode;
 mod options;
 
 use drive::drive_agent;
+use effects::{ShellRequest, build_shell, complete_shell};
 use encode::encode_result;
 use options::{JsonRequest, read_json_options, read_run_options};
 
@@ -46,6 +51,7 @@ pub const CANCELLATION_LATENCY_TARGET: Duration = Duration::from_millis(50);
 enum PendingRequest {
     Ai(AiRequest),
     Json(JsonRequest),
+    Shell(ShellRequest),
 }
 
 type Pending = Rc<RefCell<Option<PendingRequest>>>;
@@ -55,6 +61,7 @@ pub(super) fn run(
     loaded: LoadedCommand,
     service: Box<dyn AiService>,
     args: &JsonValue,
+    approval: &mut dyn ApprovalProvider,
 ) -> Result<JsonValue> {
     let LoadedCommand {
         declaration: _,
@@ -74,12 +81,15 @@ pub(super) fn run(
             .collect(),
     );
     let ai_table = build_ai(&lua, specs, Rc::clone(&in_tool), Rc::clone(&pending))?;
+    let shell_table = build_shell(&lua, Rc::clone(&in_tool), Rc::clone(&pending))?;
     let koru = lua
         .create_table()
         .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
     koru.set("json", json_table)
         .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
     koru.set("ai", ai_table)
+        .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
+    koru.set("shell", shell_table)
         .map_err(|error| error::invalid(format!("cannot build koru: {error}")))?;
     let argument = json::from_json(&lua, args)?;
     let workflow = lua
@@ -94,32 +104,46 @@ pub(super) fn run(
             .borrow_mut()
             .take()
             .ok_or_else(|| error::invalid("workflow suspended without an AI request"))?;
-        let request = match &pending_request {
-            PendingRequest::Ai(request) => request.clone(),
-            PendingRequest::Json(request) => request.request.clone(),
-        };
-        let result = drive_agent(&service, request, &context, &tools, &lua, &in_tool)?;
-        context.reserve(
-            crate::runtime::Resources {
-                bytes: result.text.len() as u64,
-                ..crate::runtime::Resources::ZERO
-            },
-            std::time::Instant::now(),
-        )?;
         let encoded = match pending_request {
-            PendingRequest::Ai(_) => encode_result(&lua, &result)
-                .map_err(|error| error::invalid(format!("cannot return the AI result: {error}")))?,
-            PendingRequest::Json(request) => encode_json_result(&lua, &result, &request.schema)?,
+            PendingRequest::Ai(request) => {
+                let result = drive_agent(&service, request, &context, &tools, &lua, &in_tool)?;
+                reserve_ai_result(&context, &result)?;
+                encode_result(&lua, &result).map_err(|error| {
+                    error::invalid(format!("cannot return the AI result: {error}"))
+                })?
+            }
+            PendingRequest::Json(request) => {
+                let result =
+                    drive_agent(&service, request.request, &context, &tools, &lua, &in_tool)?;
+                reserve_ai_result(&context, &result)?;
+                encode_json_result(&lua, &result, &request.schema)?
+            }
+            PendingRequest::Shell(request) => complete_shell(&lua, request, &context, approval)
+                .map_err(|cause| error::invalid(format!("cannot return shell result: {cause}")))?,
         };
         value = workflow
             .resume::<Value>(encoded)
             .map_err(|error| error::map(&context, error, "workflow failed"))?;
     }
+    context.ensure_active(std::time::Instant::now())?;
     if value.is_nil() {
         Ok(JsonValue::Null)
     } else {
         json::to_json(&value, &JsonLimits::default())
     }
+}
+
+fn reserve_ai_result(
+    context: &crate::runtime::ExecutionContext,
+    result: &crate::ai::AiResult,
+) -> Result<()> {
+    context.reserve(
+        crate::runtime::Resources {
+            bytes: result.text.len() as u64,
+            ..crate::runtime::Resources::ZERO
+        },
+        std::time::Instant::now(),
+    )
 }
 
 fn build_ai(
