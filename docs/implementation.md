@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated 2026-09-25. The repository contains three foundation increments; it is not a v1 release.
+Updated 2026-09-25. Lua commands with model calls now run through the CLI; this is not a v1 release.
 
 ## Available now
 
@@ -18,11 +18,12 @@ Updated 2026-09-25. The repository contains three foundation increments; it is n
 - A Rust-owned `ExecutionContext` with an immutable command/source identity, shared atomic resource reservations, hard ceilings, cancellation, and whole-command deadline state.
 - Immutable prepared process and shell descriptions, escaped approval previews, host-owned in-memory exact direct-process grants, default denial, and one-use broker authorization. Shell scripts cannot use stored direct-process exemptions. Action inputs have preparation limits.
 - Initial terminal approval and a Linux-only, library-level approved process executor. It binds the executable and working directory to open handles, uses a process group for cancellation, strips credentials from child environments, and bounds captured output. Prepared file read/write/list descriptions exist, but no file executor or Lua effect bridge exists yet.
+- `koru <command> [arguments]` now validates positional arguments, fixes the configured provider/model/variant for the run, executes the loaded Lua command through its provider adapter, and prints its returned string or JSON value. `examples/commands/ask.lua` is an installable example.
 - `just check` runs formatting, Clippy with warnings denied, tests, and Rustdoc.
 
 ## Deliberate limitations
 
-- The terminal and process executor are not wired into the CLI or Lua; `koru <command>` still returns a nonzero unsupported-capability error after declaration and argument validation. `koru model update` fetches live metadata, but there is no opt-in live smoke test yet.
+- The terminal and process executor are not wired into Lua, so `koru.shell` and file effects are unavailable in workflows. `koru model update` fetches live metadata, but there is no opt-in live smoke test yet.
 - The JSON Schema subset is enforced and adapter capabilities are checked, but the declared per-service variants are provisional until real catalogs provide them, and streaming and structured-output validation are not implemented.
 - The bridge requires services to be cooperative: on a terminal state the owner detaches the worker instead of joining it, so an uncooperative in-process service can linger until it returns. Generated-token accounting is not implemented; turns are capped by the service and the request's `max_turns`.
 - Source path symlinks are rejected during capture, but a concurrent filesystem writer can still race path checks and opens. Before source capture is used for authorization or execution, replace this with handle-relative traversal and prove the no-escape property.
@@ -36,11 +37,11 @@ Updated 2026-09-25. The repository contains three foundation increments; it is n
 - Transport: one pinned blocking HTTPS client (`ureq = 3.3.0`, rustls with webpki roots); redirects are disabled and requests/responses are bounded. Adapters are tested against recorded fixtures; no live call runs in `just check`.
 - Retries: transient failures are attempted at most three times per turn, each retry reserving one shared model request; client errors and malformed bodies are not retried.
 - Limits: an infinite Lua loop aborts within one 10,000-instruction hook quantum; the owner checks cancellation and the deadline every 5 ms while waiting; service and owner channels are bounded at capacity 8; a tool storm is bounded by the tool-call budget, not the queue.
-- 179 tests cover suspend/resume, serial tool ordering, nested-call rejection, budget exhaustion, bounded cancellation latency, uncooperative-service shutdown, JSON codec round trips and rejection, schema compile/validate matrices, capability preflight, config atomicity and concurrent writers, credential redaction, catalog parsing/cache/refresh, protocol payloads, adapter tool loops and sessions, and retry classification and budget integration.
+- 191 tests cover suspend/resume, serial tool ordering, nested-call rejection, budget exhaustion, bounded cancellation latency, uncooperative-service shutdown, JSON codec round trips and rejection, schema compile/validate matrices, capability preflight, config atomicity and concurrent writers, credential redaction, catalog parsing/cache/refresh, protocol payloads, adapter tool loops and sessions, retry classification, approved process execution, and CLI Lua workflow dispatch.
 
 ## Next implementation gates
 
-1. Add a terminal approval adapter and handle-relative, revalidated process/file execution with bounded output and cleanup. Ship `koru shell` only after its structured result, provider, permission, and cancellation gates pass.
+1. Wire the existing terminal approval and process executor into the Lua effect bridge; add revalidated file execution. Ship `koru shell` only after its structured result, provider, permission, and cancellation gates pass.
 2. Add a durable, versioned permission store and journal storage with writer locking and crash recovery; extend the shared persistence layer accordingly.
 3. Add an opt-in live provider smoke test, streaming, and structured-output validation once the terminal/effect path is stable.
 4. Implement Git snapshot and plan-only `koru commit`, then guarded publication and recovery after the dedicated Git preservation and concurrency gates in DESIGN.md pass.

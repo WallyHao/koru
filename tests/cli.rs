@@ -204,3 +204,57 @@ fn required_workflow_argument_fails_before_provider_setup() {
     assert!(stderr.contains("validation"), "{stderr}");
     assert!(stderr.contains("task"), "{stderr}");
 }
+
+#[test]
+fn configured_lua_workflow_runs_and_prints_its_result() {
+    let root = tempfile::tempdir().unwrap();
+    let commands = root.path().join("koru/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("greet.lua"),
+        r#"return {
+          api_version = 1,
+          description = "Greet someone",
+          arguments = {{ name = "name", type = "string", required = true }},
+          run = function(koru, args) return "Hello, " .. args.name end,
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("koru/config.toml"),
+        "schema_version = 1\nprovider = \"deepseek\"\nmodel = \"deepseek-chat\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .env("XDG_CACHE_HOME", root.path())
+        .env("DEEPSEEK_API_KEY", "fixture-key")
+        .args(["greet", "Ada"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"Hello, Ada\n");
+}
+
+#[test]
+fn missing_model_selection_fails_before_workflow_execution() {
+    let root = tempfile::tempdir().unwrap();
+    let commands = root.path().join("koru/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("hello.lua"),
+        "return { api_version = 1, description = 'hello', run = function() return 'ok' end }",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("select a model"));
+}

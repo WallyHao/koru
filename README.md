@@ -1,8 +1,8 @@
 # Koru
 
-Koru is a planned Rust CLI for repeatable AI-assisted workflows written in Lua. The intended v1 behavior and its release gates are specified in [docs/DESIGN.md](docs/DESIGN.md).
+Koru is a Rust CLI for repeatable AI-assisted workflows written in Lua. The intended v1 behavior and its release gates are specified in [docs/DESIGN.md](docs/DESIGN.md).
 
-This repository contains the foundation and the first terminal-effects increment. Koru discovers installed command filenames, captures an immutable bounded command/module source bundle, evaluates a script's declaration in a restricted Lua VM under instruction, memory, and wall-clock limits, and provides a single-VM bridge that suspends a workflow coroutine on `koru.ai` calls while bounded channels carry tool calls to a service. It also has a live provider boundary: a versioned configuration file, environment credentials, a bounded and cached service catalog, capability preflight, a blocking HTTPS transport, DeepSeek/OpenCode Chat Completions adapters, and bounded retries. A Linux-only approved process executor is available through the library. File execution and Lua effect wiring remain open, so `koru <command>` still returns an explicit unsupported-capability error after declaration and argument validation.
+Koru discovers installed Lua commands, captures and validates their source, and runs them in a bounded VM. Commands can call the selected DeepSeek, OpenCode Zen, or OpenCode Go model through `koru.ai.ask` and `koru.ai.run`; declared tool callbacks run through the same VM bridge. A Linux-only approved process executor is available through the Rust library. Process and file effects are not yet exposed to Lua, so commands that need those effects remain a later gate.
 
 ## Build and try it
 
@@ -15,6 +15,19 @@ cargo run --locked -- --inspect hello
 cargo run --locked -- check hello
 just check
 ```
+
+For a runnable AI command, install the included example and select a model:
+
+```sh
+mkdir -p ~/.config/koru/commands
+cp examples/commands/ask.lua ~/.config/koru/commands/ask.lua
+export DEEPSEEK_API_KEY=your_key
+cargo run --locked -- model deepseek/deepseek-chat
+cargo run --locked -- check ask
+cargo run --locked -- ask "Explain this function"
+```
+
+Set `XDG_CONFIG_HOME` if your command directory is elsewhere. The task argument is required; provider credentials stay in the environment and are not available to Lua.
 
 Install command sources under `$XDG_CONFIG_HOME/koru/commands/` or `~/.config/koru/commands/`. A top-level `hello.lua` is discovered as `hello`. Modules live under `commands/lib/` and must be declared in leading comments:
 

@@ -1,9 +1,8 @@
 # Koru Lua runtime API (version 1)
 
-Status: the `koru.json` conversion and the single-VM `koru.ai` bridge are
-implemented and exercised with a deterministic fake service. No real provider is
-wired, so `koru <command>` still reports `unsupported_capability`; the runtime
-API is reachable through the library and its tests only.
+Status: `koru.json` and `koru.ai` are implemented and available through
+`koru <command>` with the selected provider. The bridge is tested with a
+deterministic fake service and recorded provider transports.
 
 ## `koru.json`
 
@@ -103,5 +102,5 @@ error. Errors name the tool and a JSON Pointer path.
 
 ## Not implemented
 
-Real providers and credentials, streaming, retry classification, and
-terminal/process effects. See `docs/implementation.md` for details.
+Streaming, structured-output validation, and Lua terminal/process/file effects.
+See `docs/implementation.md` for details.

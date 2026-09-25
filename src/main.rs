@@ -1,9 +1,11 @@
 //! CLI composition root for source discovery, declaration checks, and selection.
 use clap::Parser;
 use koru::{
+    ai::AiService,
     config::Config,
     credentials::{Credentials, DEEPSEEK_API_KEY, OPENCODE_API_KEY, ProcessEnvironment},
     error::{ErrorCode, KoruError, Result},
+    json::{JsonValue, emit},
     lua::LoadedCommand,
     paths::UserPaths,
     provider::{
@@ -25,18 +27,14 @@ const BUILTINS: &[&str] = &[
 ];
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "koru",
-    version,
-    about = "Permission-aware Lua workflows (foundation preview)"
-)]
+#[command(name = "koru", version, about = "Permission-aware Lua workflows")]
 struct Cli {
     /// Inspect a captured source bundle without evaluating or validating Lua.
     #[arg(long, value_name = "COMMAND")]
     inspect: Option<String>,
     /// A command or builtin to run.
     command: Option<String>,
-    /// Command arguments, reserved for the workflow runtime and `check`.
+    /// Positional arguments for a workflow or arguments for a built-in command.
     #[arg(trailing_var_arg = true)]
     args: Vec<String>,
 }
@@ -71,19 +69,92 @@ fn run(cli: Cli) -> Result<()> {
             ErrorCode::UnsupportedCapability,
             format!("{name}: this builtin is not implemented yet"),
         )),
-        Some(name) => run_workflow(&commands, name, &cli.args),
+        Some(name) => run_workflow(&paths, name, &cli.args),
     }
 }
 
-fn run_workflow(commands: &Path, name: &str, args: &[String]) -> Result<()> {
-    let bundle = SourceBundle::capture(commands, name, SourceLimits::default())?;
+fn run_workflow(paths: &UserPaths, name: &str, args: &[String]) -> Result<()> {
+    let bundle = SourceBundle::capture(&paths.commands(), name, SourceLimits::default())?;
     let context = ExecutionContext::new(name, bundle.digest(), Limits::default(), Instant::now())?;
     let command = LoadedCommand::load(&bundle, &context)?;
-    let _values = command.declaration().parse_args(args)?;
-    Err(KoruError::new(
-        ErrorCode::UnsupportedCapability,
-        format!("{name}: workflow execution is not implemented yet"),
-    ))
+    let values = command.declaration().parse_args(args)?;
+    let selection = Config::load(&Config::path(paths))?;
+    let provider = selection.provider.as_deref().ok_or_else(|| {
+        KoruError::new(
+            ErrorCode::Validation,
+            "select a model with `koru model <service>/<model>` before running a workflow",
+        )
+    })?;
+    let model = selection.model.as_deref().ok_or_else(|| {
+        KoruError::new(
+            ErrorCode::Validation,
+            "select a model with `koru model <service>/<model>` before running a workflow",
+        )
+    })?;
+    let service = parse_service(provider)?;
+    if CatalogCache::new(&paths.cache).cached_model(service, model) == Some(false) {
+        return Err(KoruError::new(
+            ErrorCode::Validation,
+            format!(
+                "selected model {provider}/{model} is not in the cached catalog; run `koru model update {provider}`"
+            ),
+        ));
+    }
+    if let Some(variant) = selection.variant.as_deref()
+        && !declared_variants(service).contains(&variant)
+    {
+        return Err(KoruError::new(
+            ErrorCode::UnsupportedCapability,
+            format!("variant {variant:?} is not supported for {provider}/{model}"),
+        ));
+    }
+    let credentials = Credentials::from_environment(&ProcessEnvironment);
+    let credential = credentials
+        .require(service.credential_variable())?
+        .to_owned();
+    let transport: Arc<dyn Transport> = Arc::new(UreqTransport::new(TransportLimits::default()));
+    let adapter: Box<dyn AiService> = match service {
+        ServiceId::DeepSeek => Box::new(DeepSeekAdapter::new(
+            transport,
+            credential,
+            model,
+            selection.variant,
+        )),
+        ServiceId::OpenCode => Box::new(OpenCodeAdapter::new(
+            OpenCodeSurface::Zen,
+            transport,
+            credential,
+            model,
+            selection.variant,
+        )),
+        ServiceId::OpenCodeGo => Box::new(OpenCodeAdapter::new(
+            OpenCodeSurface::Go,
+            transport,
+            credential,
+            model,
+            selection.variant,
+        )),
+    };
+    eprintln!("model: {provider}/{model}");
+    let result = command.run(adapter, &values)?;
+    match result {
+        JsonValue::Null => {}
+        JsonValue::String(value) => println!("{}", escape_terminal(&value)),
+        other => println!("{}", emit(&other)),
+    }
+    Ok(())
+}
+
+fn escape_terminal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_control() && ch != '\n' && ch != '\t' {
+            out.extend(ch.escape_default());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 fn print_selection(config: &Config) {
