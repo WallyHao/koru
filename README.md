@@ -2,7 +2,7 @@
 
 Koru is a Rust CLI for repeatable AI-assisted workflows written in Lua. The intended v1 behavior and its release gates are specified in [docs/DESIGN.md](docs/DESIGN.md).
 
-Koru discovers installed Lua commands, captures and validates their source, and runs them in a bounded VM. Commands can call the selected DeepSeek, OpenCode Zen, or OpenCode Go model through `koru.ai.ask` and `koru.ai.run`; declared tool callbacks run through the same VM bridge. A Linux-only approved process executor is available through the Rust library. Process and file effects are not yet exposed to Lua, so commands that need those effects remain a later gate.
+Koru discovers installed Lua commands, captures and validates their source, and runs them in a bounded VM. Commands can call the selected DeepSeek, OpenCode Zen, or OpenCode Go model through `koru.ai.ask`, `koru.ai.run`, and schema-validated `koru.ai.ask_json`. The installed `shell` command can propose a script and run it only after terminal approval. Shell execution is Linux-only; file effects and grouped Git commits remain later gates.
 
 ## Build and try it
 
@@ -21,13 +21,16 @@ For a runnable AI command, install the included example and select a model:
 ```sh
 mkdir -p ~/.config/koru/commands
 cp examples/commands/ask.lua ~/.config/koru/commands/ask.lua
+cp examples/commands/shell.lua ~/.config/koru/commands/shell.lua
 export DEEPSEEK_API_KEY=your_key
 cargo run --locked -- model deepseek/deepseek-chat
 cargo run --locked -- check ask
 cargo run --locked -- ask "Explain this function"
+cargo run --locked -- check shell
+cargo run --locked -- shell "list the largest files in this directory"
 ```
 
-Set `XDG_CONFIG_HOME` if your command directory is elsewhere. The task argument is required; provider credentials stay in the environment and are not available to Lua.
+Set `XDG_CONFIG_HOME` if your command directory is elsewhere. `koru shell` accepts one task argument or prompts for it in an interactive terminal. Each proposed command requires a separate exact-action approval; redirected sessions cannot approve shell actions. Provider credentials stay in the environment and are not available to Lua or child processes.
 
 Install command sources under `$XDG_CONFIG_HOME/koru/commands/` or `~/.config/koru/commands/`. A top-level `hello.lua` is discovered as `hello`. Modules live under `commands/lib/` and must be declared in leading comments:
 

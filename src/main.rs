@@ -77,7 +77,17 @@ fn run_workflow(paths: &UserPaths, name: &str, args: &[String]) -> Result<()> {
     let bundle = SourceBundle::capture(&paths.commands(), name, SourceLimits::default())?;
     let context = ExecutionContext::new(name, bundle.digest(), Limits::default(), Instant::now())?;
     let command = LoadedCommand::load(&bundle, &context)?;
-    let values = command.declaration().parse_args(args)?;
+    let mut args = args.to_vec();
+    if name == "shell" && args.is_empty() {
+        args.push(koru::terminal::read_task()?);
+    }
+    if name == "shell" && args.len() == 1 && args[0].trim().is_empty() {
+        return Err(KoruError::new(
+            ErrorCode::Validation,
+            "shell task must not be empty",
+        ));
+    }
+    let values = command.declaration().parse_args(&args)?;
     let selection = Config::load(&Config::path(paths))?;
     let provider = selection.provider.as_deref().ok_or_else(|| {
         KoruError::new(

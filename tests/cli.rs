@@ -258,3 +258,60 @@ fn missing_model_selection_fails_before_workflow_execution() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("select a model"));
 }
+
+#[test]
+fn shell_example_checks_and_missing_task_fails_before_provider_setup() {
+    let root = tempfile::tempdir().unwrap();
+    let commands = root.path().join("koru/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("shell.lua"),
+        include_str!("../examples/commands/shell.lua"),
+    )
+    .unwrap();
+    let check = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .args(["check", "shell"])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let missing = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENCODE_API_KEY")
+        .arg("shell")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("validation"), "{stderr}");
+    assert!(stderr.contains("task argument"), "{stderr}");
+    assert!(!stderr.contains("DEEPSEEK_API_KEY"), "{stderr}");
+}
+
+#[test]
+fn shell_task_fails_on_model_selection_before_any_provider_request() {
+    let root = tempfile::tempdir().unwrap();
+    let commands = root.path().join("koru/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("shell.lua"),
+        include_str!("../examples/commands/shell.lua"),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENCODE_API_KEY")
+        .args(["shell", "list files"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("select a model"), "{stderr}");
+    assert!(!stderr.contains("API_KEY"), "{stderr}");
+}
