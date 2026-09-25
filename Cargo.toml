@@ -1,0 +1,23 @@
+[package]
+name = "koru"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A lightweight, permission-aware Lua workflow CLI"
+publish = false
+
+[dependencies]
+clap = { version = "=4.6.7", features = ["derive"] }
+sha2 = "=0.10.9"
+thiserror = "=2.0.20"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[profile.release]
+lto = "thin"
+strip = true
