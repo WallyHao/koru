@@ -69,6 +69,12 @@ validation. See `docs/lua-api.md` for the subset and the runtime
 Integer defaults must stay within the portable JSON range of `+/- (2^53 - 1)`;
 larger identifiers use strings.
 
+CLI workflow arguments are positional in declaration order. They are parsed and
+validated before a provider is constructed: `true` and `false` are the only
+boolean spellings, numeric values must be finite and within declared bounds,
+and omitted optional arguments use their default or JSON null. A missing
+required argument fails with `validation` in noninteractive mode.
+
 ## Environment and module loading
 
 - The VM is built from an explicit allowlist: `table`, `string`, `utf8`, `math`.

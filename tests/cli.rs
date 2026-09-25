@@ -177,3 +177,30 @@ fn selection_is_checked_against_the_cached_catalog() {
     assert!(String::from_utf8_lossy(&absent.stderr).contains("not in the cached"));
     assert!(run(&["model", "deepseek/known"]).status.success());
 }
+
+#[test]
+fn required_workflow_argument_fails_before_provider_setup() {
+    let root = tempfile::tempdir().unwrap();
+    let commands = root.path().join("koru/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("need_task.lua"),
+        r#"return {
+          api_version = 1,
+          description = "Needs a task",
+          arguments = {{ name = "task", type = "string", required = true }},
+          run = function(koru, args) return args.task end,
+        }"#,
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .env_remove("DEEPSEEK_API_KEY")
+        .arg("need_task")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("validation"), "{stderr}");
+    assert!(stderr.contains("task"), "{stderr}");
+}

@@ -178,6 +178,38 @@ fn cancellation_after_approval_stops_execution() {
 }
 
 #[test]
+fn file_actions_require_approval_and_reject_replaced_targets() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("data.txt");
+    std::fs::write(&path, b"old").unwrap();
+    let context = context([3; 32]);
+    let policy = Policy::new(1).unwrap();
+    let read = PreparedAction::file_read(&context, path.clone()).unwrap();
+    assert_eq!(
+        Broker::authorize(read, &context, &policy, Decision::Deny, Instant::now())
+            .unwrap_err()
+            .code(),
+        ErrorCode::PermissionDenied
+    );
+    let mut approved = Broker::authorize(
+        PreparedAction::file_write(&context, path.clone(), b"new".to_vec()).unwrap(),
+        &context,
+        &policy,
+        Decision::ApproveOnce,
+        Instant::now(),
+    )
+    .unwrap();
+    assert!(approved.action().display_preview().contains("sha256"));
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, b"other").unwrap();
+    assert_eq!(
+        approved.begin(&context, Instant::now()).unwrap_err().code(),
+        ErrorCode::StateConflict
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"other");
+}
+
+#[test]
 fn preparation_rejects_unbounded_or_controlled_inputs() {
     let context = context([1; 32]);
     let long = "x".repeat(65 * 1024);

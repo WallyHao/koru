@@ -1,5 +1,5 @@
 //! In-memory policy and one-use broker authorization; persistence is a later gate.
-use super::action::{Environment, Operation, PreparedAction};
+use super::action::{Environment, Operation, PathIdentity, PreparedAction};
 use crate::{
     error::{ErrorCode, KoruError, Result},
     runtime::{ExecutionContext, Resources},
@@ -26,8 +26,10 @@ struct ProcessGrant {
     command: String,
     source_digest: [u8; 32],
     executable: PathBuf,
+    executable_identity: PathIdentity,
     arguments: Vec<String>,
     cwd: PathBuf,
+    cwd_identity: PathIdentity,
     environment: EnvironmentKey,
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -96,9 +98,12 @@ impl Policy {
     fn process_key(&self, action: &PreparedAction) -> Option<ProcessGrant> {
         let Operation::Process {
             executable,
+            executable_identity,
             arguments,
             cwd,
+            cwd_identity,
             environment,
+            ..
         } = &action.operation
         else {
             return None;
@@ -108,8 +113,10 @@ impl Policy {
             command: action.command.clone(),
             source_digest: action.source_digest,
             executable: executable.clone(),
+            executable_identity: *executable_identity,
             arguments: arguments.clone(),
             cwd: cwd.clone(),
+            cwd_identity: *cwd_identity,
             environment: EnvironmentKey::from(environment),
         })
     }
@@ -163,6 +170,7 @@ impl ApprovedAction {
                 "authorization already used or bound to another context",
             ));
         }
+        self.action.revalidate()?;
         context.reserve(
             Resources {
                 effects: 1,

@@ -9,7 +9,7 @@ use crate::{
     schema::JsonSchema,
     source::names,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub use crate::json::MAX_SAFE_INTEGER;
 
@@ -110,6 +110,37 @@ impl CommandDeclaration {
     /// Declared tools in order; callbacks are retained by the Lua adapter.
     pub fn tools(&self) -> &[ToolDeclaration] {
         &self.tools
+    }
+
+    /// Parse positional CLI values before constructing a provider or running Lua.
+    pub fn parse_args(&self, supplied: &[String]) -> Result<JsonValue> {
+        if supplied.len() > self.arguments.len() {
+            return Err(KoruError::new(
+                ErrorCode::Validation,
+                format!(
+                    "expected at most {} command arguments",
+                    self.arguments.len()
+                ),
+            ));
+        }
+        let mut parsed = BTreeMap::new();
+        for (index, argument) in self.arguments.iter().enumerate() {
+            let value = match supplied.get(index) {
+                Some(text) => argument.parse(text)?,
+                None if argument.required => {
+                    return Err(KoruError::new(
+                        ErrorCode::Validation,
+                        format!("missing required argument {:?}", argument.name),
+                    ));
+                }
+                None => argument
+                    .default
+                    .as_ref()
+                    .map_or(JsonValue::Null, ArgumentValue::json),
+            };
+            parsed.insert(argument.name.clone(), value);
+        }
+        Ok(JsonValue::Object(parsed))
     }
 }
 
@@ -212,6 +243,57 @@ pub struct Argument {
     pub max_len: Option<u64>,
 }
 impl Argument {
+    fn parse(&self, text: &str) -> Result<JsonValue> {
+        let value = match &self.kind {
+            ArgumentType::String => JsonValue::String(text.to_owned()),
+            ArgumentType::Enum(values) if values.iter().any(|value| value == text) => {
+                JsonValue::String(text.to_owned())
+            }
+            ArgumentType::Integer => {
+                let number = text.parse::<i64>().map_err(|_| self.bad_value())?;
+                if !(-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&number) {
+                    return Err(self.bad_value());
+                }
+                JsonValue::Integer(number)
+            }
+            ArgumentType::Number => {
+                let number = text.parse::<f64>().map_err(|_| self.bad_value())?;
+                if !number.is_finite() {
+                    return Err(self.bad_value());
+                }
+                JsonValue::Number(number)
+            }
+            ArgumentType::Boolean => match text {
+                "true" => JsonValue::Bool(true),
+                "false" => JsonValue::Bool(false),
+                _ => return Err(self.bad_value()),
+            },
+            ArgumentType::Enum(_) => return Err(self.bad_value()),
+        };
+        if let Some(max_len) = self.max_len
+            && text.len() as u64 > max_len
+        {
+            return Err(self.bad_value());
+        }
+        let numeric = match value {
+            JsonValue::Integer(number) => Some(number as f64),
+            JsonValue::Number(number) => Some(number),
+            _ => None,
+        };
+        if let Some(number) = numeric
+            && (self.min.is_some_and(|min| number < min)
+                || self.max.is_some_and(|max| number > max))
+        {
+            return Err(self.bad_value());
+        }
+        Ok(value)
+    }
+    fn bad_value(&self) -> KoruError {
+        KoruError::new(
+            ErrorCode::Validation,
+            format!("invalid value for argument {:?}", self.name),
+        )
+    }
     fn validate(&self) -> Result<()> {
         if !names::identifier(&self.name) {
             return Err(KoruError::new(
@@ -319,6 +401,14 @@ pub enum ArgumentValue {
     Boolean(bool),
 }
 impl ArgumentValue {
+    fn json(&self) -> JsonValue {
+        match self {
+            Self::String(value) => JsonValue::String(value.clone()),
+            Self::Integer(value) => JsonValue::Integer(*value),
+            Self::Number(value) => JsonValue::Number(*value),
+            Self::Boolean(value) => JsonValue::Bool(*value),
+        }
+    }
     fn check(&self, kind: &ArgumentType, name: &str) -> Result<()> {
         let valid = match (self, kind) {
             (Self::String(value), ArgumentType::String) => {

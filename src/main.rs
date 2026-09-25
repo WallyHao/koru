@@ -71,11 +71,19 @@ fn run(cli: Cli) -> Result<()> {
             ErrorCode::UnsupportedCapability,
             format!("{name}: this builtin is not implemented yet"),
         )),
-        Some(name) => Err(KoruError::new(
-            ErrorCode::UnsupportedCapability,
-            format!("{name}: workflow execution is not implemented yet"),
-        )),
+        Some(name) => run_workflow(&commands, name, &cli.args),
     }
+}
+
+fn run_workflow(commands: &Path, name: &str, args: &[String]) -> Result<()> {
+    let bundle = SourceBundle::capture(commands, name, SourceLimits::default())?;
+    let context = ExecutionContext::new(name, bundle.digest(), Limits::default(), Instant::now())?;
+    let command = LoadedCommand::load(&bundle, &context)?;
+    let _values = command.declaration().parse_args(args)?;
+    Err(KoruError::new(
+        ErrorCode::UnsupportedCapability,
+        format!("{name}: workflow execution is not implemented yet"),
+    ))
 }
 
 fn print_selection(config: &Config) {
