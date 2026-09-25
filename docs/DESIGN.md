@@ -296,11 +296,12 @@ These conventions adapt architectural principles from `/home/wallyhao/Workspace/
 These choices are resolved in the corresponding increment, or still require evidence before their affected gate can pass:
 
 - Resolved: the API version 1 declaration field spelling and the argument/help schema (`docs/declaration.md`). Ergonomic constructors remain open.
-- Resolved: the Lua binding and backend are `mlua = 0.12.1` with vendored Lua 5.5.1 and an explicit library allowlist. The Rig version, executor/channel implementation, and whether a worker process is needed for cancellation bounds remain open.
-- Resolved (initial values only): execution and Lua defaults/hard ceilings. Supported-platform process cleanup and documented cancellation-latency targets remain open; the declaration hook observes cancellation within one instruction quantum.
+- Resolved: the Lua binding and backend are `mlua = 0.12.1` with vendored Lua 5.5.1 and an explicit library allowlist. The executor/channels are std bounded channels driven by synchronous `yield_with`/`Thread::resume`; the global hook covers mlua-created coroutines, so no worker process is needed for the declaration bounds. The Rig version and provider capability mapping remain open.
+- Resolved: typed Lua/JSON conversion (`docs/lua-api.md`). Enforcing the documented JSON-schema subset and validating argument values remain open.
+- Resolved (initial values only): execution and Lua defaults/hard ceilings. Supported-platform process cleanup and documented cancellation-latency targets remain open; the declaration hook observes cancellation within one instruction quantum and the bridge checks cancellation each wait tick.
 - Open: initial tested Zen/Go models, per-protocol variant mapping, and fallback metadata sources when catalog capability fields are absent.
 - Open: minimum tested Git version for reference transactions, signing-helper compatibility, and subsequent hooks/worktree/index-format support.
-- Open: measured release binary size target; the current stripped measurement is 1,436,224 bytes.
+- Open: measured release binary size target; the current stripped measurement is 1,513,112 bytes.
 
 Permission authority, shared budgets, preview/execution identity, staged-snapshot preservation, and recovery reconciliation are required architectural contracts rather than optional follow-up work.
 

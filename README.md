@@ -2,7 +2,7 @@
 
 Koru is a planned Rust CLI for repeatable AI-assisted workflows written in Lua. The intended v1 behavior and its release gates are specified in [docs/DESIGN.md](docs/DESIGN.md).
 
-This repository contains two foundation increments. Koru discovers installed command filenames, captures an immutable bounded command/module source bundle, and evaluates a script's declaration in a restricted Lua VM under instruction, memory, and wall-clock limits. It does not call a model, execute a process, write files, or create Git commits. Workflow execution returns an explicit unsupported-capability error until its runtime is implemented.
+This repository contains three foundation increments. Koru discovers installed command filenames, captures an immutable bounded command/module source bundle, evaluates a script's declaration in a restricted Lua VM under instruction, memory, and wall-clock limits, and provides a single-VM bridge that suspends a workflow coroutine on `koru.ai` calls while bounded channels carry tool calls to a service. No real provider is wired, and Koru does not execute a process, write files, or create Git commits. The `koru <command>` CLI still returns an explicit unsupported-capability error until a provider and executor exist.
 
 ## Build and try it
 
@@ -27,6 +27,6 @@ return {
 }
 ```
 
-`koru --inspect NAME` reports the SHA-256 source-bundle digest and module count without evaluating Lua. `koru check [NAME]` evaluates and validates declarations under the bounded loader; without a name it checks every discovered command. It grants no permissions and performs no effects. See [docs/declaration.md](docs/declaration.md) for the API version 1 field reference.
+`koru --inspect NAME` reports the SHA-256 source-bundle digest and module count without evaluating Lua. `koru check [NAME]` evaluates and validates declarations under the bounded loader; without a name it checks every discovered command. It grants no permissions and performs no effects. See [docs/declaration.md](docs/declaration.md) for the API version 1 field reference and [docs/lua-api.md](docs/lua-api.md) for the `koru.json`/`koru.ai` runtime API.
 
 Implementation status, current limits, and the next release gates are in [docs/implementation.md](docs/implementation.md). Plans are under [docs/plans/](docs/plans/).

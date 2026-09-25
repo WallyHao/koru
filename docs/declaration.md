@@ -28,12 +28,28 @@ return {
 | `description` | yes | string | 1 to 1024 bytes, no control characters. |
 | `arguments` | no | array | At most 32 entries, contiguous from index 1. |
 | `capabilities` | no | table | Only `direct_processes` is known. A request, never a grant. |
+| `tools` | no | array | At most 32 tool declarations; see below. |
 | `run` | yes | function | Validated as a function; `koru check` never calls it. |
 
-Unknown fields are validation errors. `tools` and `exemptions` are part of the
-eventual v1 surface but are rejected with `unsupported_capability` until the AI
-bridge and the durable exemption store exist, so a passing check never implies
-support for them.
+Unknown fields are validation errors. Requested `exemptions` remain rejected
+with `unsupported_capability` until the durable exemption store exists, so a
+passing check never implies support for them.
+
+## Tool declarations
+
+Each `tools` entry is a table:
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `name` | yes | string | `[a-z][a-z0-9_]*`, at most 64 bytes, unique. |
+| `description` | yes | string | 1 to 1024 bytes, no control characters. |
+| `parameters` | yes | object | JSON schema document under the JSON limits. |
+| `result` | no | object | Optional JSON schema document. |
+| `run` | yes | function | Callback invoked with JSON arguments; returns JSON. |
+
+Tool names are checked against the declaration; `koru.ai.run` may offer only a
+declared subset. Callbacks are never invoked by `koru check`. See
+`docs/lua-api.md` for the runtime `koru.json`/`koru.ai` behavior.
 
 ## Argument entries
 
