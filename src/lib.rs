@@ -13,6 +13,7 @@ pub mod provider;
 pub mod runtime;
 pub mod schema;
 pub mod source;
+pub mod transport;
 
 /// The command declaration API version planned for the first runtime.
 pub const API_VERSION: u32 = 1;
