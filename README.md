@@ -157,9 +157,9 @@ The `shell` example takes one task argument, asks the selected model for a struc
 koru shell "List the five largest files in the current directory."
 ```
 
-At the approval prompt, type `yes` to authorize that exact action once. Any other answer denies it. Every proposed action needs its own approval. You can omit the task argument only in an interactive terminal; Koru then asks for one bounded line of task input. The workflow cannot obtain approval in a redirected session.
+At the approval prompt, press `y` to authorize that exact action once. Any other answer denies it. Every proposed action needs its own approval. You can omit the task argument only in an interactive terminal; Koru then prompts for one bounded line of task input. The workflow cannot obtain approval in a redirected session.
 
-Koru runs the displayed script through its Linux process executor, bounds captured output, and removes inherited provider credentials from the child environment. The shell workflow cannot add arbitrary child environment variables.
+After approval, Koru streams the captured standard output to standard output, standard error to standard error, and reports a nonzero exit status or signal as a diagnostic. It does not print the raw JSON result of the workflow. Koru runs the displayed script through its Linux process executor, bounds captured output, and removes inherited provider credentials from the child environment. The shell workflow cannot add arbitrary child environment variables.
 
 ### Review a staged-change plan
 

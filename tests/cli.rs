@@ -241,6 +241,51 @@ fn configured_lua_workflow_runs_and_prints_its_result() {
 }
 
 #[test]
+fn shell_shaped_results_stream_output_and_propagate_the_exit_status() {
+    let root = tempfile::tempdir().unwrap();
+    let commands = root.path().join("koru/commands");
+    fs::create_dir_all(&commands).unwrap();
+    fs::write(
+        commands.join("demo.lua"),
+        r#"return {
+          api_version = 1,
+          description = "shell-shaped result",
+          run = function(koru)
+            return {
+              ok = false,
+              exit_code = 7,
+              signal = koru.json.null,
+              stdout = "line one\nline two\n",
+              stderr = "problem\n",
+              stdout_truncated = false,
+              stderr_truncated = true,
+            }
+          end,
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("koru/config.toml"),
+        "schema_version = 1\nprovider = \"deepseek\"\nmodel = \"deepseek-chat\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_koru"))
+        .env("XDG_CONFIG_HOME", root.path())
+        .env("XDG_CACHE_HOME", root.path())
+        .env("DEEPSEEK_API_KEY", "fixture-key")
+        .arg("demo")
+        .output()
+        .unwrap();
+    assert_eq!(output.stdout, b"line one\nline two\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("problem"), "{stderr}");
+    assert!(stderr.contains("truncated"), "{stderr}");
+    assert!(stderr.contains("status 7"), "{stderr}");
+    assert!(!stderr.contains('{'), "{stderr}");
+    assert_eq!(output.status.code(), Some(7));
+}
+
+#[test]
 fn missing_model_selection_fails_before_workflow_execution() {
     let root = tempfile::tempdir().unwrap();
     let commands = root.path().join("koru/commands");

@@ -73,7 +73,8 @@ pub(super) fn complete_shell(
                 .chars()
                 .flat_map(char::escape_default)
                 .collect();
-            eprintln!("Plan: {escaped}");
+            let style = crate::terminal::Style::stderr();
+            eprintln!("{} {escaped}", style.bold("Plan:"));
         }
         let decision = approval.decide(&action, context.deadline())?;
         let policy = Policy::new(1)?;

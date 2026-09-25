@@ -5,7 +5,6 @@ use koru::{
     config::Config,
     credentials::{Credentials, DEEPSEEK_API_KEY, OPENCODE_API_KEY, ProcessEnvironment},
     error::{ErrorCode, KoruError, Result},
-    json::{JsonValue, emit},
     lua::LoadedCommand,
     paths::UserPaths,
     provider::{
@@ -38,7 +37,7 @@ struct Cli {
     #[arg(trailing_var_arg = true)]
     args: Vec<String>,
 }
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<i32> {
     let paths = UserPaths::from_environment()?;
     let commands = paths.commands();
     if let Some(name) = cli.inspect {
@@ -53,18 +52,18 @@ fn run(cli: Cli) -> Result<()> {
         println!("source_sha256: {}", bundle.digest_hex());
         println!("modules: {}", bundle.modules().len());
         println!("scope: captured only; Lua was not evaluated");
-        return Ok(());
+        return Ok(0);
     }
     match cli.command.as_deref() {
         None => {
             for name in discover(&commands)? {
                 println!("{name}");
             }
-            Ok(())
+            Ok(0)
         }
-        Some("check") => run_check(&commands, &cli.args),
-        Some("model") => run_model(&paths, &cli.args),
-        Some("variant") => run_variant(&paths, &cli.args),
+        Some("check") => run_check(&commands, &cli.args).map(|()| 0),
+        Some("model") => run_model(&paths, &cli.args).map(|()| 0),
+        Some("variant") => run_variant(&paths, &cli.args).map(|()| 0),
         Some(name) if BUILTINS.contains(&name) => Err(KoruError::new(
             ErrorCode::UnsupportedCapability,
             format!("{name}: this builtin is not implemented yet"),
@@ -73,7 +72,7 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn run_workflow(paths: &UserPaths, name: &str, args: &[String]) -> Result<()> {
+fn run_workflow(paths: &UserPaths, name: &str, args: &[String]) -> Result<i32> {
     let bundle = SourceBundle::capture(&paths.commands(), name, SourceLimits::default())?;
     let context = ExecutionContext::new(name, bundle.digest(), Limits::default(), Instant::now())?;
     let command = LoadedCommand::load(&bundle, &context)?;
@@ -145,26 +144,13 @@ fn run_workflow(paths: &UserPaths, name: &str, args: &[String]) -> Result<()> {
             selection.variant,
         )),
     };
-    eprintln!("model: {provider}/{model}");
+    eprintln!(
+        "{}",
+        koru::terminal::Style::stderr().dim(&format!("model: {provider}/{model}"))
+    );
     let result = command.run(adapter, &values)?;
-    match result {
-        JsonValue::Null => {}
-        JsonValue::String(value) => println!("{}", escape_terminal(&value)),
-        other => println!("{}", emit(&other)),
-    }
-    Ok(())
-}
-
-fn escape_terminal(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() && ch != '\n' && ch != '\t' {
-            out.extend(ch.escape_default());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
+    koru::terminal::render_result(&result)?;
+    Ok(koru::terminal::exit_code(&result))
 }
 
 fn print_selection(config: &Config) {
@@ -412,12 +398,18 @@ fn run_check(commands: &Path, args: &[String]) -> Result<()> {
     match args {
         [] => {
             let mut failed = 0usize;
+            let out_style = koru::terminal::Style::stdout();
+            let err_style = koru::terminal::Style::stderr();
             for name in discover(commands)? {
                 match check_one(commands, &name) {
-                    Ok(()) => println!("{name}: ok"),
+                    Ok(()) => println!("{name}: {}", out_style.green("ok")),
                     Err(error) => {
                         failed += 1;
-                        eprintln!("{name}: {}: {}", error.code().as_str(), error.message());
+                        eprintln!(
+                            "{name}: {}: {}",
+                            err_style.red(error.code().as_str()),
+                            error.message()
+                        );
                     }
                 }
             }
@@ -431,7 +423,7 @@ fn run_check(commands: &Path, args: &[String]) -> Result<()> {
         }
         [name] => {
             check_one(commands, name)?;
-            println!("{name}: ok");
+            println!("{name}: {}", koru::terminal::Style::stdout().green("ok"));
             Ok(())
         }
         _ => Err(KoruError::new(
@@ -448,8 +440,16 @@ fn check_one(commands: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 fn main() {
-    if let Err(error) = run(Cli::parse()) {
-        eprintln!("koru [{}]: {}", error.code().as_str(), error.message());
-        std::process::exit(1);
+    match run(Cli::parse()) {
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
+            let style = koru::terminal::Style::stderr();
+            eprintln!(
+                "koru [{}]: {}",
+                style.red(error.code().as_str()),
+                error.message()
+            );
+            std::process::exit(1);
+        }
     }
 }

@@ -287,9 +287,21 @@ impl PreparedAction {
     }
     /// A bounded, escaped textual preview of this exact operation.
     pub fn display_preview(&self) -> String {
-        // Keep arbitrary model text from injecting terminal control sequences.
+        // Keep arbitrary model text from injecting terminal control sequences
+        // while leaving shell line breaks readable for the approver.
         fn escaped(value: &str) -> String {
             value.chars().flat_map(char::escape_default).collect()
+        }
+        fn escaped_lines(value: &str) -> String {
+            let mut out = String::with_capacity(value.len());
+            for ch in value.chars() {
+                if ch == '\n' {
+                    out.push('\n');
+                } else {
+                    out.extend(ch.escape_default());
+                }
+            }
+            out
         }
         match &self.operation {
             Operation::Process {
@@ -297,34 +309,44 @@ impl PreparedAction {
                 arguments,
                 cwd,
                 environment,
-                path_env,
                 ..
             } => {
-                let args = arguments
-                    .iter()
-                    .map(|arg| escaped(arg))
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                format!(
-                    "direct process: {} [{}] in {} PATH={} env={environment:?}",
+                let args = if arguments.is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    arguments
+                        .iter()
+                        .map(|arg| escaped(arg))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                };
+                let mut preview = format!(
+                    "command: {}\narguments: {args}\ndirectory: {}",
                     escaped(&executable.to_string_lossy()),
-                    args,
-                    escaped(&cwd.to_string_lossy()),
-                    escaped(path_env)
-                )
+                    escaped(&cwd.to_string_lossy())
+                );
+                if let Environment::Additions(values) = environment
+                    && !values.is_empty()
+                {
+                    let additions = values
+                        .iter()
+                        .map(|(key, value)| format!("{key}={}", escaped(value)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    preview.push_str(&format!("\nenvironment: {additions}"));
+                }
+                preview
             }
             Operation::Shell {
                 executable,
                 script,
                 cwd,
-                path_env,
                 ..
             } => format!(
-                "shell: {} in {} PATH={}\nscript: {}",
+                "shell: {}\ndirectory: {}\nscript:\n{}",
                 escaped(&executable.to_string_lossy()),
                 escaped(&cwd.to_string_lossy()),
-                escaped(path_env),
-                escaped(script)
+                escaped_lines(script)
             ),
             Operation::FileRead { path, .. } => {
                 format!("read file: {}", escaped(&path.to_string_lossy()))

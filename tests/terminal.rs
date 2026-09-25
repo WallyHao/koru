@@ -54,6 +54,19 @@ fn denial_and_redirected_input_never_authorize() {
             Instant::now() + Duration::from_secs(1)
         )
         .unwrap(),
+        Decision::ApproveOnce
+    ));
+    let mut input = Cursor::new(b"n\n".to_vec());
+    let mut output = Vec::new();
+    assert!(matches!(
+        decide(
+            &action(),
+            &mut input,
+            &mut output,
+            true,
+            Instant::now() + Duration::from_secs(1)
+        )
+        .unwrap(),
         Decision::Deny
     ));
     let mut input = Cursor::new(b"yes\n".to_vec());
