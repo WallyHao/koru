@@ -1,7 +1,7 @@
 //! Bounded, immutable command source capture without Lua evaluation.
 mod bundle;
 mod discovery;
-mod names;
+pub(crate) mod names;
 mod reader;
 
 pub use bundle::{CapturedSource, SourceBundle, SourceLimits};

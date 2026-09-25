@@ -21,6 +21,10 @@ pub struct Limits {
     pub effects: u64,
     /// Total input/output bytes charged by adapters.
     pub bytes: u64,
+    /// Cumulative Lua instruction budget charged by the VM hook.
+    pub instructions: u64,
+    /// Peak memory allowed in one Lua VM; a cap, not a cumulative debit.
+    pub lua_memory_bytes: u64,
     /// Whole-command wall time including user approval.
     pub wall_time: Duration,
 }
@@ -31,6 +35,8 @@ impl Default for Limits {
             tool_calls: 64,
             effects: 128,
             bytes: 8 * 1024 * 1024,
+            instructions: 50_000_000,
+            lua_memory_bytes: 64 * 1024 * 1024,
             wall_time: Duration::from_secs(600),
         }
     }
@@ -42,6 +48,8 @@ impl Limits {
             || self.tool_calls > hard.tool_calls
             || self.effects > hard.effects
             || self.bytes > hard.bytes
+            || self.instructions > hard.instructions
+            || self.lua_memory_bytes > hard.lua_memory_bytes
             || self.wall_time > hard.wall_time
         {
             return Err(KoruError::new(
@@ -63,6 +71,8 @@ pub struct Resources {
     pub effects: u64,
     /// Input/output bytes.
     pub bytes: u64,
+    /// Lua instructions executed.
+    pub instructions: u64,
 }
 impl Resources {
     /// A reservation with no additional resource use.
@@ -71,6 +81,7 @@ impl Resources {
         tool_calls: 0,
         effects: 0,
         bytes: 0,
+        instructions: 0,
     };
 }
 /// Terminal state cannot be reset by a workflow or its callbacks.
@@ -155,6 +166,11 @@ impl ExecutionContext {
         ) || over(usage.tool_calls, request.tool_calls, limits.tool_calls)
             || over(usage.effects, request.effects, limits.effects)
             || over(usage.bytes, request.bytes, limits.bytes)
+            || over(
+                usage.instructions,
+                request.instructions,
+                limits.instructions,
+            )
         {
             ledger.state = RunState::Exhausted;
             return Err(KoruError::new(
@@ -167,6 +183,7 @@ impl ExecutionContext {
             tool_calls: usage.tool_calls + request.tool_calls,
             effects: usage.effects + request.effects,
             bytes: usage.bytes + request.bytes,
+            instructions: usage.instructions + request.instructions,
         };
         Ok(())
     }

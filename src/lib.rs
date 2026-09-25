@@ -1,6 +1,8 @@
 //! Koru-owned workflow boundaries; adapters must not widen their authority.
 
+pub mod declaration;
 pub mod error;
+pub mod lua;
 pub mod paths;
 pub mod permissions;
 pub mod runtime;

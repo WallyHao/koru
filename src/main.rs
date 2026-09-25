@@ -1,10 +1,17 @@
-//! CLI composition root for currently implemented source discovery.
+//! CLI composition root for source discovery and bounded declaration checking.
 use clap::Parser;
 use koru::{
     error::{ErrorCode, KoruError, Result},
+    lua::LoadedCommand,
     paths::UserPaths,
+    runtime::{ExecutionContext, Limits},
     source::{SourceBundle, SourceLimits, discover},
 };
+use std::{path::Path, time::Instant};
+
+const BUILTINS: &[&str] = &[
+    "check", "model", "variant", "recover", "help", "list", "inspect",
+];
 
 #[derive(Debug, Parser)]
 #[command(
@@ -16,9 +23,9 @@ struct Cli {
     /// Inspect a captured source bundle without evaluating or validating Lua.
     #[arg(long, value_name = "COMMAND")]
     inspect: Option<String>,
-    /// A command to run; workflow execution is not implemented yet.
+    /// A command or builtin to run.
     command: Option<String>,
-    /// Command arguments, reserved for the workflow runtime.
+    /// Command arguments, reserved for the workflow runtime and `check`.
     #[arg(trailing_var_arg = true)]
     args: Vec<String>,
 }
@@ -39,15 +46,61 @@ fn run(cli: Cli) -> Result<()> {
         println!("scope: captured only; Lua was not evaluated");
         return Ok(());
     }
-    if let Some(name) = cli.command {
-        return Err(KoruError::new(
+    match cli.command.as_deref() {
+        None => {
+            for name in discover(&commands)? {
+                println!("{name}");
+            }
+            Ok(())
+        }
+        Some("check") => run_check(&commands, &cli.args),
+        Some(name) if BUILTINS.contains(&name) => Err(KoruError::new(
             ErrorCode::UnsupportedCapability,
-            format!("{name}: workflow execution and check are not implemented yet"),
-        ));
+            format!("{name}: this builtin is not implemented yet"),
+        )),
+        Some(name) => Err(KoruError::new(
+            ErrorCode::UnsupportedCapability,
+            format!("{name}: workflow execution is not implemented yet"),
+        )),
     }
-    for name in discover(&commands)? {
-        println!("{name}");
+}
+fn run_check(commands: &Path, args: &[String]) -> Result<()> {
+    match args {
+        [] => {
+            let mut failed = 0usize;
+            for name in discover(commands)? {
+                match check_one(commands, &name) {
+                    Ok(()) => println!("{name}: ok"),
+                    Err(error) => {
+                        failed += 1;
+                        eprintln!("{name}: {}: {}", error.code().as_str(), error.message());
+                    }
+                }
+            }
+            if failed > 0 {
+                return Err(KoruError::new(
+                    ErrorCode::Validation,
+                    format!("{failed} command(s) failed validation"),
+                ));
+            }
+            Ok(())
+        }
+        [name] => {
+            check_one(commands, name)?;
+            println!("{name}: ok");
+            Ok(())
+        }
+        _ => Err(KoruError::new(
+            ErrorCode::Validation,
+            "check accepts at most one command name",
+        )),
     }
+}
+fn check_one(commands: &Path, name: &str) -> Result<()> {
+    let bundle = SourceBundle::capture(commands, name, SourceLimits::default())?;
+    let context = ExecutionContext::new(name, bundle.digest(), Limits::default(), Instant::now())?;
+    let command = LoadedCommand::load(&bundle, &context)?;
+    debug_assert_eq!(command.declaration().api_version(), koru::API_VERSION);
     Ok(())
 }
 fn main() {

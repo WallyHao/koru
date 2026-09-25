@@ -25,7 +25,8 @@ pub fn module(name: &str) -> Result<()> {
     }
     Ok(())
 }
-fn identifier(value: &str) -> bool {
+/// Validate a portable lowercase identifier shared by commands, modules, and arguments.
+pub(crate) fn identifier(value: &str) -> bool {
     let mut chars = value.chars();
     matches!(chars.next(), Some('a'..='z'))
         && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')

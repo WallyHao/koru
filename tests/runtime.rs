@@ -15,7 +15,7 @@ fn reservations_are_atomic_across_all_resources_and_clones() {
         tool_calls: 1,
         effects: 2,
         bytes: 100,
-        wall_time: Duration::from_secs(30),
+        ..Limits::default()
     };
     let now = Instant::now();
     let context = context(limits, now);
