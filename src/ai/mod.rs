@@ -187,12 +187,22 @@ pub trait AiService: Send + 'static {
 pub trait ServiceEvents {
     /// Invoke one tool on the VM owner and wait for its result.
     fn call_tool(&mut self, call: ToolCall) -> std::result::Result<ToolResult, ServiceError>;
+
+    /// Reserve one additional model request before retrying a transient failure.
+    ///
+    /// The VM owner charges the shared ledger; the default is permissive so test
+    /// doubles that never retry need no implementation.
+    fn reserve_retry(&mut self) -> std::result::Result<(), ServiceError> {
+        Ok(())
+    }
 }
 
 /// An event sent from a service worker to the VM owner.
 pub(crate) enum Event {
     /// The service asks the owner to run one tool.
     ToolCall(ToolCall),
+    /// The service asks to charge one model request before a retry.
+    Retry,
     /// The service finished the run.
     Finished(std::result::Result<AiResult, ServiceError>),
 }
@@ -201,6 +211,8 @@ pub(crate) enum Event {
 pub(crate) enum Reply {
     /// The tool call outcome.
     Result(std::result::Result<ToolResult, ServiceError>),
+    /// The retry reservation outcome.
+    Retry(std::result::Result<(), ServiceError>),
 }
 
 /// The channel-backed [`ServiceEvents`] used across the worker boundary.
@@ -217,6 +229,22 @@ impl ServiceEvents for ChannelEvents {
             .map_err(|_| ServiceError::cancelled("the VM owner stopped the run"))?;
         match self.replies.recv() {
             Ok(Reply::Result(result)) => result,
+            Ok(Reply::Retry(_)) => Err(ServiceError::provider(
+                "the VM owner sent an unexpected retry reply",
+            )),
+            Err(_) => Err(ServiceError::cancelled("the VM owner stopped the run")),
+        }
+    }
+
+    fn reserve_retry(&mut self) -> std::result::Result<(), ServiceError> {
+        self.events
+            .send(Event::Retry)
+            .map_err(|_| ServiceError::cancelled("the VM owner stopped the run"))?;
+        match self.replies.recv() {
+            Ok(Reply::Retry(result)) => result,
+            Ok(Reply::Result(_)) => Err(ServiceError::provider(
+                "the VM owner sent an unexpected tool reply",
+            )),
             Err(_) => Err(ServiceError::cancelled("the VM owner stopped the run")),
         }
     }

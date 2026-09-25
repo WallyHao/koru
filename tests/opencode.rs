@@ -141,7 +141,9 @@ fn redacts_credentials_in_errors() {
 #[test]
 fn reports_transport_failures() {
     let transport = Arc::new(FixtureTransport::new(TransportLimits::default()));
-    transport.push_error(TransportErrorKind::Connect, "down");
+    for _ in 0..3 {
+        transport.push_error(TransportErrorKind::Connect, "down");
+    }
     let mut go = adapter(OpenCodeSurface::Go, Arc::clone(&transport));
     let error = go
         .run(request(), &mut Collector { calls: Vec::new() })

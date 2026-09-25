@@ -136,6 +136,15 @@ impl TransportError {
     pub fn kind(&self) -> TransportErrorKind {
         self.kind
     }
+    /// Whether a retry within the same budget could reasonably succeed.
+    pub fn retryable(&self) -> bool {
+        matches!(
+            self.kind,
+            TransportErrorKind::Timeout
+                | TransportErrorKind::Connect
+                | TransportErrorKind::Protocol
+        )
+    }
     /// A bounded, credential-free message.
     pub fn message(&self) -> &str {
         &self.message

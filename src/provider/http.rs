@@ -5,8 +5,40 @@ use crate::{
     json::{self, JsonLimits, JsonValue},
     transport::{Response, TransportError, TransportErrorKind},
 };
+use std::time::Duration;
 
 const MAX_ERROR_EXCERPT: usize = 512;
+/// Longest honored `Retry-After` delay.
+pub(super) const MAX_RETRY_AFTER_SECS: u64 = 5;
+
+/// A classified non-2xx provider response.
+pub(super) struct HttpFailure {
+    /// The normalized provider error.
+    pub error: ServiceError,
+    /// Whether a retry within the same budget could reasonably succeed.
+    pub retryable: bool,
+    /// A bounded server-requested delay.
+    pub retry_after: Option<Duration>,
+}
+
+/// Classify a non-2xx response for retry decisions.
+pub(super) fn failure_from_response(response: &Response, secrets: &[&str]) -> HttpFailure {
+    let retryable = matches!(response.status, 408 | 429 | 500 | 502 | 503 | 504);
+    let retry_after = response
+        .header("retry-after")
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|seconds| Duration::from_secs(seconds.min(MAX_RETRY_AFTER_SECS)));
+    let body = String::from_utf8_lossy(&response.body);
+    let excerpt = excerpt(&redact(secrets.iter().copied(), &body), MAX_ERROR_EXCERPT);
+    HttpFailure {
+        error: ServiceError::provider(format!(
+            "provider returned HTTP {}: {excerpt}",
+            response.status
+        )),
+        retryable,
+        retry_after,
+    }
+}
 
 /// Convert a transport failure into a redacted provider error.
 pub(super) fn transport_error(error: TransportError, secrets: &[&str]) -> ServiceError {

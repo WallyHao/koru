@@ -97,6 +97,27 @@ pub(super) fn drive_agent(
                     }
                 }
             }
+            Ok(Event::Retry) => {
+                match context.reserve(
+                    Resources {
+                        model_requests: 1,
+                        ..Resources::ZERO
+                    },
+                    Instant::now(),
+                ) {
+                    Ok(()) => {
+                        if reply_tx.send(Reply::Retry(Ok(()))).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let reply = ServiceError::provider(error.message().to_owned());
+                        let _ = reply_tx.send(Reply::Retry(Err(reply)));
+                        terminal = Some(error);
+                        break;
+                    }
+                }
+            }
             Ok(Event::Finished(result)) => {
                 outcome = result;
                 break;

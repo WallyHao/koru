@@ -174,7 +174,9 @@ fn reports_http_failures_with_redaction() {
 #[test]
 fn reports_transport_failures() {
     let transport = Arc::new(FixtureTransport::new(TransportLimits::default()));
-    transport.push_error(TransportErrorKind::Timeout, "late");
+    for _ in 0..3 {
+        transport.push_error(TransportErrorKind::Timeout, "late");
+    }
     let mut service = adapter(Arc::clone(&transport));
     let mut collector = Collector::default();
     let error = service

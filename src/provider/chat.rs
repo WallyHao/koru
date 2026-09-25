@@ -5,6 +5,10 @@ use crate::{
     json,
     transport::{Request, Transport},
 };
+use std::time::Duration;
+
+/// Bounded attempts for one model turn, independent of the shared budget.
+const MAX_ATTEMPTS_PER_TURN: u32 = 3;
 
 /// One fixed provider endpoint and selection.
 pub(super) struct ChatEndpoint {
@@ -53,13 +57,7 @@ pub(super) fn run_chat(
             &request.tools,
             endpoint.effort.as_deref(),
         );
-        let response = transport
-            .send(&endpoint.request(&body))
-            .map_err(|error| http::transport_error(error, &endpoint.secrets()))?;
-        let response = http::require_success(response, &endpoint.secrets())?;
-        let document = http::json_body(&response)?;
-        let parsed = protocol::parse_response(&document)
-            .map_err(|error| ServiceError::provider(error.message().to_owned()))?;
+        let parsed = complete(transport, endpoint, &body, events)?;
         text = parsed.text.clone();
         usage = parsed.usage;
         request_id = parsed.request_id;
@@ -94,6 +92,68 @@ pub(super) fn run_chat(
         model: endpoint.model.clone(),
         usage,
         request_id,
+    })
+}
+
+/// One failed model attempt with its retry classification.
+struct AttemptFailure {
+    error: ServiceError,
+    retryable: bool,
+    retry_after: Option<Duration>,
+}
+
+/// Complete one model turn, retrying transient failures within the shared budget.
+fn complete(
+    transport: &dyn Transport,
+    endpoint: &ChatEndpoint,
+    body: &crate::json::JsonValue,
+    events: &mut dyn ServiceEvents,
+) -> std::result::Result<protocol::ParsedResponse, ServiceError> {
+    let mut attempt = 1;
+    loop {
+        match one_attempt(transport, endpoint, body) {
+            Ok(parsed) => return Ok(parsed),
+            Err(failure) if failure.retryable && attempt < MAX_ATTEMPTS_PER_TURN => {
+                events.reserve_retry()?;
+                if let Some(delay) = failure.retry_after {
+                    std::thread::sleep(delay);
+                }
+                attempt += 1;
+            }
+            Err(failure) => return Err(failure.error),
+        }
+    }
+}
+
+fn one_attempt(
+    transport: &dyn Transport,
+    endpoint: &ChatEndpoint,
+    body: &crate::json::JsonValue,
+) -> std::result::Result<protocol::ParsedResponse, AttemptFailure> {
+    let response = transport
+        .send(&endpoint.request(body))
+        .map_err(|error| AttemptFailure {
+            retryable: error.retryable(),
+            error: http::transport_error(error, &endpoint.secrets()),
+            retry_after: None,
+        })?;
+    if !response.is_success() {
+        let failure = http::failure_from_response(&response, &endpoint.secrets());
+        return Err(AttemptFailure {
+            error: failure.error,
+            retryable: failure.retryable,
+            retry_after: failure.retry_after,
+        });
+    }
+    let document = http::json_body(&response).map_err(|error| AttemptFailure {
+        error,
+        retryable: false,
+        retry_after: None,
+    })?;
+    protocol::parse_response(&document).map_err(|error| AttemptFailure {
+        error: ServiceError::provider(error.message().to_owned()),
+        retryable: false,
+        retry_after: None,
     })
 }
 
