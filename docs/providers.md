@@ -4,8 +4,9 @@ Status: `config.toml`, environment credentials, the bounded service catalog and 
 cache, adapter capability preflight, the blocking HTTP transport, the DeepSeek and
 OpenCode adapters, and the `koru model`/`koru variant` commands are implemented. The
 adapters are exercised end to end against fixture transports; there is no opt-in live
-smoke test yet. `koru <command>` now runs Lua workflows with the selected adapter;
-terminal-approved process and file effects are not yet available to Lua.
+smoke test yet. `koru <command>` runs Lua workflows with the selected adapter. The
+Linux shell action and staged Git plan are available through their brokered APIs;
+Lua file effects and automatic commit publication are not implemented.
 
 ## Configuration
 
@@ -110,5 +111,6 @@ or unavailable is reported rather than silently substituted.
 
 ## Not implemented
 
-An opt-in live provider smoke test, streaming, structured-output validation, interactive
-selection, Lua effect approval/execution, and `koru shell`.
+An opt-in live provider smoke test, streaming, provider-native structured output,
+interactive selection, and Lua file effects. Shell effects and the plan-only Git API
+are documented in `docs/lua-api.md`; automatic commit publication remains disabled.
