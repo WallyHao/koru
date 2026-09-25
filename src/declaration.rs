@@ -5,7 +5,8 @@
 //! `koru check` and the future workflow runtime.
 use crate::{
     error::{ErrorCode, KoruError, Result},
-    json::JsonValue,
+    json::{JsonLimits, JsonValue},
+    schema::JsonSchema,
     source::names,
 };
 use std::collections::BTreeSet;
@@ -75,11 +76,10 @@ impl CommandDeclaration {
         }
         let mut tool_names = BTreeSet::new();
         for tool in &tools {
-            tool.validate()?;
-            if !tool_names.insert(tool.name.as_str()) {
+            if !tool_names.insert(tool.name()) {
                 return Err(KoruError::new(
                     ErrorCode::Validation,
-                    format!("duplicate tool name {:?}", tool.name),
+                    format!("duplicate tool name {:?}", tool.name()),
                 ));
             }
         }
@@ -113,47 +113,74 @@ impl CommandDeclaration {
     }
 }
 
-/// A validated tool declaration; the callback is retained by the Lua adapter.
+/// A validated tool declaration with compiled schemas; the callback is retained
+/// by the Lua adapter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolDeclaration {
-    /// Unique portable tool name.
-    pub name: String,
-    /// Human-readable description.
-    pub description: String,
-    /// JSON schema document for the tool arguments.
-    pub parameters: JsonValue,
-    /// Optional JSON schema document for the tool result.
-    pub result: Option<JsonValue>,
+    name: String,
+    description: String,
+    parameters: JsonSchema,
+    result: Option<JsonSchema>,
 }
 impl ToolDeclaration {
-    fn validate(&self) -> Result<()> {
-        if !names::identifier(&self.name) {
+    /// Validate tool metadata and compile its argument and result schemas.
+    ///
+    /// The argument schema must describe an object at its root; the optional
+    /// result schema may describe any supported JSON value.
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: JsonValue,
+        result: Option<JsonValue>,
+    ) -> Result<Self> {
+        let name = name.into();
+        let description = description.into();
+        if !names::identifier(&name) {
             return Err(KoruError::new(
                 ErrorCode::Validation,
-                format!("invalid tool name {:?}", self.name),
+                format!("invalid tool name {name:?}"),
             ));
         }
         validate_text(
             "tool description",
-            &self.description,
+            &description,
             MAX_DESCRIPTION_BYTES,
             true,
         )?;
-        if !matches!(self.parameters, JsonValue::Object(_)) {
+        let limits = JsonLimits::default();
+        let parameters = JsonSchema::compile(&parameters, &limits)?;
+        if !parameters.is_object_root() {
             return Err(KoruError::new(
                 ErrorCode::Validation,
-                format!("tool {:?} parameters must be a JSON object", self.name),
+                format!("tool {name:?} parameters must describe an object"),
             ));
         }
-        if let Some(result) = &self.result
-            && !matches!(result, JsonValue::Object(_))
-        {
-            return Err(KoruError::new(
-                ErrorCode::Validation,
-                format!("tool {:?} result must be a JSON object", self.name),
-            ));
-        }
-        Ok(())
+        let result = match result {
+            Some(document) => Some(JsonSchema::compile(&document, &limits)?),
+            None => None,
+        };
+        Ok(Self {
+            name,
+            description,
+            parameters,
+            result,
+        })
+    }
+    /// Unique portable tool name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Human-readable description.
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+    /// Compiled schema for the tool arguments.
+    pub fn parameters(&self) -> &JsonSchema {
+        &self.parameters
+    }
+    /// Compiled schema for the tool result, when declared.
+    pub fn result(&self) -> Option<&JsonSchema> {
+        self.result.as_ref()
     }
 }
 

@@ -6,11 +6,16 @@ use koru::{
     },
     error::{ErrorCode, KoruError, Result},
     json::JsonValue,
-    lua::LoadedCommand,
+    lua::{CANCELLATION_LATENCY_TARGET, LoadedCommand},
     runtime::{ExecutionContext, Limits},
     source::{SourceBundle, SourceLimits},
 };
-use std::{fs, thread, time::Instant};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
+};
 use tempfile::TempDir;
 
 struct Fixture {
@@ -319,6 +324,187 @@ return {
         &JsonValue::Array(vec![JsonValue::Bool(true), JsonValue::Null])
     );
     assert_eq!(field(&result, "empty"), &JsonValue::Array(Vec::new()));
+}
+
+#[test]
+fn tool_arguments_are_validated_before_dispatch() {
+    let entry = r#"
+return {
+  api_version = 1,
+  description = "demo",
+  tools = {
+    {
+      name = "add",
+      description = "adds two integers",
+      parameters = {
+        type = "object",
+        properties = { a = { type = "integer" }, b = { type = "integer" } },
+        required = { "a", "b" },
+      },
+      run = function(args) error("CALLBACK_RAN") end,
+    },
+  },
+  run = function(koru, args)
+    local _ = koru.ai.run({ prompt = "go", tools = { "add" } })
+    return {}
+  end,
+}
+"#;
+    let fixture = Fixture::new(entry, Limits::default());
+    let service = FakeAiService::with_rounds(vec![FakeRound::calls(vec![(
+        "add".to_owned(),
+        object(vec![
+            ("a", JsonValue::String("nope".to_owned())),
+            ("b", JsonValue::Integer(1)),
+        ]),
+    )])]);
+    let error = fixture.run(Box::new(service), &empty()).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::Validation);
+    assert!(!error.message().contains("CALLBACK_RAN"));
+    assert!(error.message().contains("a"));
+}
+
+#[test]
+fn declared_tool_results_are_validated() {
+    let entry = r#"
+return {
+  api_version = 1,
+  description = "demo",
+  tools = {
+    {
+      name = "total",
+      description = "sums",
+      parameters = { type = "object" },
+      result = {
+        type = "object",
+        properties = { total = { type = "integer" } },
+        required = { "total" },
+      },
+      run = function(args) return { total = "not-an-integer" } end,
+    },
+  },
+  run = function(koru, args)
+    local _ = koru.ai.run({ prompt = "go", tools = { "total" } })
+    return {}
+  end,
+}
+"#;
+    let fixture = Fixture::new(entry, Limits::default());
+    let service =
+        FakeAiService::with_rounds(vec![FakeRound::calls(vec![("total".to_owned(), empty())])]);
+    let error = fixture.run(Box::new(service), &empty()).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::Validation);
+    assert!(error.message().contains("result"));
+}
+
+#[test]
+fn valid_tool_contracts_dispatch() {
+    let entry = r#"
+return {
+  api_version = 1,
+  description = "demo",
+  tools = {
+    {
+      name = "next",
+      description = "increments",
+      parameters = {
+        type = "object",
+        properties = { value = { type = "integer" } },
+        required = { "value" },
+      },
+      result = {
+        type = "object",
+        properties = { next = { type = "integer" } },
+        required = { "next" },
+      },
+      run = function(args) return { next = args.value + 1 } end,
+    },
+  },
+  run = function(koru, args)
+    local r = koru.ai.run({ prompt = "go", tools = { "next" } })
+    return { text = r.text }
+  end,
+}
+"#;
+    let fixture = Fixture::new(entry, Limits::default());
+    let service = FakeAiService::with_rounds(vec![FakeRound::calls(vec![(
+        "next".to_owned(),
+        object(vec![("value", JsonValue::Integer(41))]),
+    )])]);
+    let result = fixture.run(Box::new(service), &empty()).unwrap();
+    assert_eq!(
+        field(&result, "text"),
+        &JsonValue::String("done".to_owned())
+    );
+}
+
+#[test]
+fn greedy_tool_calls_are_bounded_by_the_budget() {
+    let entry = r#"
+return {
+  api_version = 1,
+  description = "demo",
+  tools = {
+    { name = "noop", description = "does nothing", parameters = { type = "object" }, run = function(args) return {} end },
+  },
+  run = function(koru, args)
+    local _ = koru.ai.run({ prompt = "go", tools = { "noop" }, max_turns = 8 })
+    return {}
+  end,
+}
+"#;
+    let fixture = Fixture::new(
+        entry,
+        Limits {
+            tool_calls: 64,
+            ..Limits::default()
+        },
+    );
+    let calls = (0..200)
+        .map(|_| ("noop".to_owned(), empty()))
+        .collect::<Vec<_>>();
+    let service = FakeAiService::with_rounds(vec![FakeRound::calls(calls)]);
+    let error = fixture.run(Box::new(service), &empty()).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::BudgetExhausted);
+    assert_eq!(fixture.context.usage().unwrap().tool_calls, 64);
+}
+
+#[test]
+fn uncooperative_service_does_not_block_shutdown() {
+    let fixture = Fixture::new(
+        ASK,
+        Limits {
+            wall_time: Duration::from_millis(100),
+            ..Limits::default()
+        },
+    );
+    let service = FakeAiService::answer("late").delay(Duration::from_secs(5));
+    let start = Instant::now();
+    let error = fixture.run(Box::new(service), &empty()).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::Timeout);
+    assert!(start.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn cancellation_latency_is_bounded() {
+    let fixture = Fixture::new(ASK, Limits::default());
+    let cancel = fixture.context.clone();
+    let cancelled_at = Arc::new(Mutex::new(None::<Instant>));
+    let slot = Arc::clone(&cancelled_at);
+    let canceller = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        cancel.cancel().unwrap();
+        *slot.lock().unwrap() = Some(Instant::now());
+    });
+    let service = FakeAiService::answer("late").delay(Duration::from_millis(200));
+    let error = fixture
+        .run(Box::new(service), &object(vec![("name", JsonValue::Null)]))
+        .unwrap_err();
+    let returned = Instant::now();
+    canceller.join().unwrap();
+    assert_eq!(error.code(), ErrorCode::Cancelled);
+    let at = cancelled_at.lock().unwrap().unwrap();
+    assert!(returned.duration_since(at) < CANCELLATION_LATENCY_TARGET * 4);
 }
 
 #[test]

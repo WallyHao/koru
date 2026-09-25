@@ -7,4 +7,5 @@ mod json;
 mod loader;
 mod sandbox;
 
+pub use bridge::{AI_SERVICE_JOIN_GRACE, CANCELLATION_LATENCY_TARGET};
 pub use command::LoadedCommand;

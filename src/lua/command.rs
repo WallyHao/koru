@@ -6,6 +6,7 @@ use crate::{
     error::{ErrorCode, KoruError, Result},
     json::JsonValue,
     runtime::ExecutionContext,
+    schema::JsonSchema,
     source::SourceBundle,
 };
 use mlua::{Function, Value};
@@ -14,6 +15,7 @@ use std::collections::BTreeMap;
 /// A declared tool callback retained for VM-owner dispatch.
 pub(super) struct ToolEntry {
     pub(super) spec: ToolSpec,
+    pub(super) result: Option<JsonSchema>,
     pub(super) callback: Function,
 }
 
@@ -45,13 +47,14 @@ impl LoadedCommand {
         let mut tools = BTreeMap::new();
         for (tool, callback) in declaration.tools().iter().zip(callbacks) {
             tools.insert(
-                tool.name.clone(),
+                tool.name().to_owned(),
                 ToolEntry {
                     spec: ToolSpec {
-                        name: tool.name.clone(),
-                        description: tool.description.clone(),
-                        parameters: tool.parameters.clone(),
+                        name: tool.name().to_owned(),
+                        description: tool.description().to_owned(),
+                        parameters: tool.parameters().clone(),
                     },
+                    result: tool.result().cloned(),
                     callback,
                 },
             );

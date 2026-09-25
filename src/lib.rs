@@ -8,6 +8,7 @@ pub mod lua;
 pub mod paths;
 pub mod permissions;
 pub mod runtime;
+pub mod schema;
 pub mod source;
 
 /// The command declaration API version planned for the first runtime.

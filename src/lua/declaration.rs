@@ -139,15 +139,8 @@ fn read_tool(table: &Table) -> Result<(ToolDeclaration, Function)> {
         .ok_or_else(|| error::invalid(format!("tool {name:?} is missing `parameters`")))?;
     let callback =
         callback.ok_or_else(|| error::invalid(format!("tool {name:?} is missing `run`")))?;
-    Ok((
-        ToolDeclaration {
-            name,
-            description,
-            parameters,
-            result,
-        },
-        callback,
-    ))
+    let declaration = ToolDeclaration::new(name, description, parameters, result)?;
+    Ok((declaration, callback))
 }
 
 fn read_argument(table: &Table) -> Result<Argument> {

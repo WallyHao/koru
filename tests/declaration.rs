@@ -200,13 +200,21 @@ fn carries_requested_capabilities_without_granting_them() {
     assert!(declaration.capabilities().direct_processes);
 }
 
+fn object(pairs: Vec<(&str, JsonValue)>) -> JsonValue {
+    JsonValue::Object(
+        pairs
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    )
+}
+
+fn parameters() -> JsonValue {
+    object(vec![("type", JsonValue::String("object".to_owned()))])
+}
+
 fn tool(name: &str) -> ToolDeclaration {
-    ToolDeclaration {
-        name: name.to_owned(),
-        description: "does a thing".to_owned(),
-        parameters: JsonValue::Object(Default::default()),
-        result: None,
-    }
+    ToolDeclaration::new(name, "does a thing", parameters(), None).unwrap()
 }
 fn build_with_tools(tools: Vec<ToolDeclaration>) -> Result<CommandDeclaration> {
     CommandDeclaration::new(1, "demo", Vec::new(), Capabilities::default(), tools)
@@ -216,7 +224,7 @@ fn build_with_tools(tools: Vec<ToolDeclaration>) -> Result<CommandDeclaration> {
 fn accepts_valid_tools() {
     let declaration = build_with_tools(vec![tool("first"), tool("second")]).unwrap();
     assert_eq!(declaration.tools().len(), 2);
-    assert_eq!(declaration.tools()[0].name, "first");
+    assert_eq!(declaration.tools()[0].name(), "first");
 }
 
 #[test]
@@ -229,7 +237,9 @@ fn rejects_duplicate_or_malformed_tool_names() {
     );
     for name in ["Bad", "", "1tool"] {
         assert_eq!(
-            build_with_tools(vec![tool(name)]).unwrap_err().code(),
+            ToolDeclaration::new(name, "does a thing", parameters(), None)
+                .unwrap_err()
+                .code(),
             ErrorCode::Validation
         );
     }
@@ -237,16 +247,47 @@ fn rejects_duplicate_or_malformed_tool_names() {
 
 #[test]
 fn rejects_non_object_tool_schemas() {
-    let mut parameters = tool("t");
-    parameters.parameters = JsonValue::String("nope".to_owned());
     assert_eq!(
-        build_with_tools(vec![parameters]).unwrap_err().code(),
+        ToolDeclaration::new("t", "desc", JsonValue::String("nope".to_owned()), None)
+            .unwrap_err()
+            .code(),
         ErrorCode::Validation
     );
-    let mut result = tool("t");
-    result.result = Some(JsonValue::Bool(true));
+    let string_root = object(vec![("type", JsonValue::String("string".to_owned()))]);
     assert_eq!(
-        build_with_tools(vec![result]).unwrap_err().code(),
+        ToolDeclaration::new("t", "desc", string_root, None)
+            .unwrap_err()
+            .code(),
+        ErrorCode::Validation
+    );
+}
+
+#[test]
+fn rejects_unsupported_schema_keywords() {
+    let reference = object(vec![("$ref", JsonValue::String("#/defs/x".to_owned()))]);
+    assert_eq!(
+        ToolDeclaration::new("t", "desc", parameters(), Some(reference))
+            .unwrap_err()
+            .code(),
+        ErrorCode::Validation
+    );
+    let pattern = object(vec![
+        ("type", JsonValue::String("object".to_owned())),
+        (
+            "properties",
+            object(vec![(
+                "name",
+                object(vec![
+                    ("type", JsonValue::String("string".to_owned())),
+                    ("pattern", JsonValue::String("^[a-z]+$".to_owned())),
+                ]),
+            )]),
+        ),
+    ]);
+    assert_eq!(
+        ToolDeclaration::new("t", "desc", pattern, None)
+            .unwrap_err()
+            .code(),
         ErrorCode::Validation
     );
 }

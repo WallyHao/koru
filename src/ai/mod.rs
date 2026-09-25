@@ -5,7 +5,7 @@
 //! tool calls through [`ServiceEvents`], which the VM owner implements.
 pub mod fake;
 
-use crate::json::JsonValue;
+use crate::{json::JsonValue, schema::JsonSchema};
 use std::sync::mpsc::{Receiver, SyncSender};
 
 /// One bounded agent request.
@@ -26,8 +26,8 @@ pub struct ToolSpec {
     pub name: String,
     /// Human-readable description.
     pub description: String,
-    /// JSON schema document for the arguments.
-    pub parameters: JsonValue,
+    /// Compiled JSON schema for the arguments.
+    pub parameters: JsonSchema,
 }
 
 /// A tool invocation requested by a service.
