@@ -1,6 +1,12 @@
 //! Koru-owned JSON value model with explicit, bounded conversion rules.
+mod emit;
+mod parse;
+
 use crate::error::{ErrorCode, KoruError, Result};
 use std::collections::BTreeMap;
+
+pub use emit::emit;
+pub use parse::parse;
 
 /// Largest integer that is exact in the JSON/JavaScript number range.
 pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
