@@ -4,6 +4,7 @@ pub mod ai;
 pub mod config;
 pub mod credentials;
 pub mod declaration;
+pub mod effects;
 pub mod error;
 pub mod json;
 pub mod lua;

@@ -153,6 +153,10 @@ impl ExecutionContext {
     pub fn limits(&self) -> Limits {
         self.0.limits
     }
+    /// Whole-command deadline shared by approval, provider, and effects.
+    pub fn deadline(&self) -> Instant {
+        self.0.deadline
+    }
     /// Reserve capacity before dispatch; any failure makes this run terminal.
     pub fn reserve(&self, request: Resources, now: Instant) -> Result<()> {
         let mut ledger = self.ledger()?;

@@ -30,6 +30,7 @@ struct ProcessGrant {
     arguments: Vec<String>,
     cwd: PathBuf,
     cwd_identity: PathIdentity,
+    path_env: String,
     environment: EnvironmentKey,
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,6 +103,7 @@ impl Policy {
             arguments,
             cwd,
             cwd_identity,
+            path_env,
             environment,
             ..
         } = &action.operation
@@ -117,6 +119,7 @@ impl Policy {
             arguments: arguments.clone(),
             cwd: cwd.clone(),
             cwd_identity: *cwd_identity,
+            path_env: path_env.clone(),
             environment: EnvironmentKey::from(environment),
         })
     }

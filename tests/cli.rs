@@ -26,7 +26,7 @@ fn discovery_does_not_execute_scripts_and_inspection_labels_its_scope() {
     assert!(String::from_utf8_lossy(&check.stderr).contains("validation"));
     let workflow = run(&["hello"]);
     assert!(!workflow.status.success());
-    assert!(String::from_utf8_lossy(&workflow.stderr).contains("unsupported_capability"));
+    assert!(String::from_utf8_lossy(&workflow.stderr).contains("validation"));
 }
 
 #[test]

@@ -32,6 +32,7 @@ pub(crate) enum Operation {
         arguments: Vec<String>,
         cwd: PathBuf,
         cwd_identity: PathIdentity,
+        path_env: String,
         environment: Environment,
     },
     Shell {
@@ -40,6 +41,7 @@ pub(crate) enum Operation {
         script: String,
         cwd: PathBuf,
         cwd_identity: PathIdentity,
+        path_env: String,
     },
     FileRead {
         path: PathBuf,
@@ -69,6 +71,9 @@ impl PathIdentity {
     fn of(path: &PathBuf) -> Result<Self> {
         let metadata =
             fs::symlink_metadata(path).map_err(|error| KoruError::at_path(path.clone(), error))?;
+        Self::of_metadata(&metadata)
+    }
+    pub(crate) fn of_metadata(metadata: &fs::Metadata) -> Result<Self> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -213,6 +218,7 @@ impl PreparedAction {
         let cwd = canonical_dir(cwd)?;
         let executable_identity = PathIdentity::of(&executable)?;
         let cwd_identity = PathIdentity::of(&cwd)?;
+        let path_env = child_path()?;
         Ok(Self::new(
             context,
             Operation::Process {
@@ -221,6 +227,7 @@ impl PreparedAction {
                 arguments,
                 cwd,
                 cwd_identity,
+                path_env,
                 environment,
             },
         ))
@@ -248,6 +255,7 @@ impl PreparedAction {
         let cwd = canonical_dir(cwd)?;
         let executable_identity = PathIdentity::of(&executable)?;
         let cwd_identity = PathIdentity::of(&cwd)?;
+        let path_env = child_path()?;
         Ok(Self::new(
             context,
             Operation::Shell {
@@ -256,6 +264,7 @@ impl PreparedAction {
                 script,
                 cwd,
                 cwd_identity,
+                path_env,
             },
         ))
     }
@@ -288,6 +297,7 @@ impl PreparedAction {
                 arguments,
                 cwd,
                 environment,
+                path_env,
                 ..
             } => {
                 let args = arguments
@@ -296,21 +306,24 @@ impl PreparedAction {
                     .collect::<Vec<_>>()
                     .join(" | ");
                 format!(
-                    "direct process: {} [{}] in {} env={environment:?}",
+                    "direct process: {} [{}] in {} PATH={} env={environment:?}",
                     escaped(&executable.to_string_lossy()),
                     args,
-                    escaped(&cwd.to_string_lossy())
+                    escaped(&cwd.to_string_lossy()),
+                    escaped(path_env)
                 )
             }
             Operation::Shell {
                 executable,
                 script,
                 cwd,
+                path_env,
                 ..
             } => format!(
-                "shell: {} in {}\nscript: {}",
+                "shell: {} in {} PATH={}\nscript: {}",
                 escaped(&executable.to_string_lossy()),
                 escaped(&cwd.to_string_lossy()),
+                escaped(path_env),
                 escaped(script)
             ),
             Operation::FileRead { path, .. } => {
@@ -384,6 +397,16 @@ impl PreparedAction {
             && self.command == context.command()
             && self.source_digest == context.source_digest()
     }
+}
+fn child_path() -> Result<String> {
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_owned());
+    if path.len() > MAX_ACTION_BYTES || path.contains('\0') {
+        return Err(KoruError::new(
+            ErrorCode::Validation,
+            "child PATH is invalid or too long",
+        ));
+    }
+    Ok(path)
 }
 fn canonical_file(path: PathBuf) -> Result<PathBuf> {
     let canonical = fs::canonicalize(&path).map_err(|error| KoruError::at_path(path, error))?;

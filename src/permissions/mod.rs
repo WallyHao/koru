@@ -1,5 +1,5 @@
 //! Broker-owned action identity and host-owned in-memory policy contracts.
-mod action;
+pub(crate) mod action;
 mod policy;
 
 pub use action::{Environment, PreparedAction};

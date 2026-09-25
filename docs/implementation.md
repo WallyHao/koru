@@ -17,15 +17,16 @@ Updated 2026-09-25. The repository contains three foundation increments; it is n
 - A bounded JSON codec (strict parse, canonical emit) over `JsonValue`, used for protocol payloads and cache files.
 - A Rust-owned `ExecutionContext` with an immutable command/source identity, shared atomic resource reservations, hard ceilings, cancellation, and whole-command deadline state.
 - Immutable prepared process and shell descriptions, escaped approval previews, host-owned in-memory exact direct-process grants, default denial, and one-use broker authorization. Shell scripts cannot use stored direct-process exemptions. Action inputs have preparation limits.
+- Initial terminal approval and a Linux-only, library-level approved process executor. It binds the executable and working directory to open handles, uses a process group for cancellation, strips credentials from child environments, and bounds captured output. Prepared file read/write/list descriptions exist, but no file executor or Lua effect bridge exists yet.
 - `just check` runs formatting, Clippy with warnings denied, tests, and Rustdoc.
 
 ## Deliberate limitations
 
-- No terminal approval or effect executor exists, so `koru <command>` still returns a nonzero unsupported-capability error and the bridge is exercised through the library and the fake service. `koru model update` fetches live metadata, but there is no opt-in live smoke test yet.
+- The terminal and process executor are not wired into the CLI or Lua; `koru <command>` still returns a nonzero unsupported-capability error after declaration and argument validation. `koru model update` fetches live metadata, but there is no opt-in live smoke test yet.
 - The JSON Schema subset is enforced and adapter capabilities are checked, but the declared per-service variants are provisional until real catalogs provide them, and streaming and structured-output validation are not implemented.
 - The bridge requires services to be cooperative: on a terminal state the owner detaches the worker instead of joining it, so an uncooperative in-process service can linger until it returns. Generated-token accounting is not implemented; turns are capped by the service and the request's `max_turns`.
 - Source path symlinks are rejected during capture, but a concurrent filesystem writer can still race path checks and opens. Before source capture is used for authorization or execution, replace this with handle-relative traversal and prove the no-escape property.
-- Prepared process paths are resolved at preparation time, but no executor revalidates file identity. Stored exemptions exist only in memory. The process preview uses Rust debug rendering for environment additions.
+- Process execution is supported only on Linux with `/proc/self/fd` and process-group signaling; other platforms fail explicitly. The implementation still needs descendant cleanup and approval-timeout fault fixtures before the shell release gate. Stored exemptions exist only in memory. The process preview uses Rust debug rendering for environment additions.
 - Resource ceilings are initial conservative values; only Lua evaluation and the bridge charge them so far.
 
 ## Measured evidence
