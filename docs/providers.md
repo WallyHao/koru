@@ -1,10 +1,11 @@
 # Provider boundary, configuration, and selection
 
-Status: `config.toml`, environment credentials, the bounded service catalog, adapter
-capability preflight, and the `koru model`/`koru variant` commands are implemented and
-tested against a fixture metadata source. No network transport exists, so
-`koru model update` reports `unsupported_capability` and `koru <command>` still cannot
-run a workflow.
+Status: `config.toml`, environment credentials, the bounded service catalog and its
+cache, adapter capability preflight, the blocking HTTP transport, the DeepSeek and
+OpenCode adapters, and the `koru model`/`koru variant` commands are implemented. The
+adapters are exercised end to end against fixture transports; there is no opt-in live
+smoke test yet, and `koru <command>` still cannot run a workflow because no terminal
+approval or effect executor exists.
 
 ## Configuration
 
@@ -23,13 +24,11 @@ variant = "high"
   allowed; unknown keys, duplicate keys, malformed lines, bare values, unsupported
   escapes, and non-UTF-8 fail with a line-qualified error.
 - A missing file means no selection. An unsupported `schema_version` fails rather than
-  being ignored.
-- A variant requires a selected provider and model. A provider alone is allowed while
-  choosing a service.
-- Writes create a same-directory temporary file and rename it into place, so a partial
-  file is never left behind. Read-modify-write holds a lock file so concurrent selection
-  does not lose an update. Crash-safe stale-lock recovery belongs to the persistence
-  gate and is not promised yet.
+  being ignored. A variant requires a selected provider and model.
+- Writes are atomic (same-directory temporary file plus rename) and read-modify-write
+  holds a shared lock, so concurrent selection cannot lose an update. A lock older
+  than 60 seconds is treated as abandoned and replaced; a fresh lock that cannot be
+  taken fails with actionable guidance.
 
 ## Credentials
 
@@ -38,45 +37,71 @@ written to `config.toml`, never exposed to Lua, and are removed from error and
 diagnostic text. A missing credential for a chosen provider fails with a `validation`
 error naming the variable; there is no silent fallback.
 
-## Services and the catalog
+## Transport
+
+Adapters talk to providers through a blocking `Transport` boundary:
+
+- The production transport is `ureq` over rustls with pinned webpki roots. There is no
+  async runtime.
+- Requests and responses are bounded; connect and read timeouts apply; redirects are
+  disabled so credentials can never be forwarded to another host; the user agent is
+  `koru/<version>`.
+- Any HTTP status is returned as a response; only transport-level failures (DNS,
+  connect, TLS, protocol, size, redirect) are classified. Provider errors are redacted
+  before they reach the user.
+- A deterministic fixture transport records requests and replays scripted responses or
+  failures for tests.
+
+## JSON codec
+
+Protocol payloads and cache files use a Koru-owned bounded JSON codec: a strict parser
+and a canonical emitter over `JsonValue`. It rejects trailing data, duplicate keys,
+unescaped controls, invalid escapes, lone surrogates, non-finite numbers, and anything
+beyond the depth, element, or byte limits. Integral floats keep an explicit `.0` so a
+round trip restores the same variant.
+
+## Services, adapters, and the catalog
 
 Three service identities are distinct: `deepseek`, `opencode`, and `opencode-go`. Each
-has its own credentials, metadata, and (later) cache.
+has its own credentials, metadata, and cache. DeepSeek and the OpenCode surfaces use one
+Chat Completions mapping; OpenCode Go additionally sends a stable
+`x-opencode-session` on every request, including tool-loop turns and retries.
 
-Catalog parsing consumes a bounded JSON document with a `data` array. Each model may
-carry an `id`, a display name, a context length, a `capabilities` object with `tools`
-and `structured_output`, and `variants`. Unknown provider fields are ignored; wrong
-types or oversized values fail with `validation`. A missing capability field is
-**unknown** and is never treated as supported.
+Catalog parsing consumes a bounded JSON document with a `data` array. Unknown provider
+fields are ignored; wrong types or oversized values fail with `validation`. A missing
+capability field is **unknown** and is never treated as supported.
 
-Refreshing one service replaces only that service's entries and leaves its previous
-entries intact when the fetch or parse fails. On-disk catalog caching is deferred to the
-persistence gate.
+`koru model update` fetches live metadata through the adapter and caches it under
+`$XDG_CACHE_HOME/koru/catalog/<service>.json`. The cache is disposable: corrupt or
+unsupported data is ignored and refetched, and writes are atomic under the shared lock.
+Refreshing one service replaces only that service and reuses its previous entries when
+the fetch fails. Selection is checked against the best available cache: a model absent
+from a cached catalog is reported with a pointer to `koru model update`.
 
 ## Capability preflight
 
-Each adapter reports `ServiceCapabilities`: whether tools are supported, whether
-structured output is supported, which schema keywords it accepts, its variants, and
-whether it uses sessions. Before any `koru.ai.run` dispatches, the bridge checks the
-request against those capabilities:
+Each adapter reports `ServiceCapabilities`: tool support, structured-output support, the
+schema keywords it accepts, declared variants, and session use. Before any
+`koru.ai.run` dispatches, the bridge checks the request: tools without tool support or a
+schema using an unsupported keyword fail with `unsupported_capability`, before the
+service thread starts and before any model-request budget is charged.
 
-- tools requested from a service without tool support fail with
-  `unsupported_capability`;
-- a requested tool schema that uses a keyword outside the adapter's supported set fails
-  with `unsupported_capability`;
-- an unknown capability is treated as unsupported.
+## Retries
 
-Preflight runs before the service thread starts and before any model-request budget is
-charged.
+A model turn is attempted at most three times. Only explicitly transient failures are
+retried: connect, timeout, protocol, and the HTTP statuses 408, 429, 500, 502, 503, and
+504. Each retry reserves one model request from the shared budget through the VM owner,
+so a retry storm stops at the budget and the whole-command deadline. A bounded
+`Retry-After` is honored. A request is never replayed after a tool call has executed.
 
 ## Commands
 
 - `koru model` prints the current selection and the implemented services.
 - `koru model <service>` selects a provider and clears the model and variant.
-- `koru model <service>/<model>` selects a provider and model. A variant that is invalid
-  for the new selection is cleared with a notice.
-- `koru model update <service>` and `koru model update --all` fetch catalog metadata. In
-  this increment the production source reports `unsupported_capability`.
+- `koru model <service>/<model>` selects a provider and model, checked against the
+  cache; an invalid variant is cleared with a notice.
+- `koru model update <service>` and `koru model update --all` fetch and cache live
+  metadata, report a removed selected model, and require the service credential.
 - `koru variant` lists the variants valid for the current selection; `koru variant
   <name>` sets one. Without a selected model it fails with `validation`.
 
@@ -85,5 +110,5 @@ or unavailable is reported rather than silently substituted.
 
 ## Not implemented
 
-Real HTTP transport and live endpoints, provider protocol payloads, streaming, retry
-classification, on-disk catalog caching, interactive selection, and `koru shell`.
+An opt-in live provider smoke test, streaming, structured-output validation, interactive
+selection, terminal approval, and `koru shell`.
