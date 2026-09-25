@@ -18,6 +18,10 @@ pub enum ErrorCode {
     Cancelled,
     /// The execution deadline expired.
     Timeout,
+    /// A provider or transport reported a failure.
+    ProviderFailure,
+    /// A model-requested tool failed.
+    ToolFailure,
     /// A filesystem or other I/O operation failed.
     Io,
 }
@@ -32,6 +36,8 @@ impl ErrorCode {
             Self::StateConflict => "state_conflict",
             Self::Cancelled => "cancelled",
             Self::Timeout => "timeout",
+            Self::ProviderFailure => "provider_failure",
+            Self::ToolFailure => "tool_failure",
             Self::Io => "io",
         }
     }

@@ -16,6 +16,11 @@ pub(super) fn unsupported(message: impl Into<String>) -> KoruError {
     KoruError::new(ErrorCode::UnsupportedCapability, escape(&message.into()))
 }
 
+/// Build an error in a chosen category with escaped, bounded text.
+pub(super) fn coded(code: ErrorCode, message: impl Into<String>) -> KoruError {
+    KoruError::new(code, escape(&message.into()))
+}
+
 /// Classify an mlua failure, preferring the terminal execution state.
 pub(super) fn map(context: &ExecutionContext, error: mlua::Error, what: &str) -> KoruError {
     if let Ok(state) = context.state() {

@@ -94,12 +94,40 @@ fn unsupported_api_version_and_deferred_fields_fail_explicitly() {
     );
 
     let fixture = Fixture::new(
-        r#"return { api_version = 1, description = "demo", run = function() end, tools = {} }"#,
+        r#"return { api_version = 1, description = "demo", run = function() end, exemptions = {} }"#,
         &[],
     );
     assert_eq!(
         fixture.code(Limits::default()),
         ErrorCode::UnsupportedCapability
+    );
+}
+
+#[test]
+fn accepts_tool_declarations_and_requires_callbacks() {
+    let valid = r#"
+return {
+  api_version = 1,
+  description = "demo",
+  tools = {
+    { name = "lookup", description = "looks up", parameters = { type = "object" }, run = function(args) return args end },
+  },
+  run = function(koru, args) end,
+}
+"#;
+    assert!(Fixture::new(valid, &[]).load(Limits::default()).is_ok());
+
+    let missing_callback = r#"
+return {
+  api_version = 1,
+  description = "demo",
+  tools = { { name = "lookup", description = "looks up", parameters = {} } },
+  run = function(koru, args) end,
+}
+"#;
+    assert_eq!(
+        Fixture::new(missing_callback, &[]).code(Limits::default()),
+        ErrorCode::Validation
     );
 }
 

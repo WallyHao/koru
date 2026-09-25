@@ -1,19 +1,25 @@
 //! Convert an evaluated Lua table into the Rust-owned declaration contract.
-use super::error;
+use super::{error, json};
 use crate::{
     declaration::{
         Argument, ArgumentType, ArgumentValue, Capabilities, CommandDeclaration, MAX_ARGUMENTS,
+        MAX_TOOLS, ToolDeclaration,
     },
     error::Result,
+    json::JsonLimits,
 };
 use mlua::{Function, Table, Value};
 
-/// Extract and validate the declaration table plus its retained `run` function.
-pub(super) fn convert(table: &Table) -> Result<(CommandDeclaration, Function)> {
+/// Extract and validate the declaration table plus its callbacks.
+///
+/// Returns the validated declaration, the `run` function, and the tool callbacks
+/// aligned with [`CommandDeclaration::tools`].
+pub(super) fn convert(table: &Table) -> Result<(CommandDeclaration, Function, Vec<Function>)> {
     let mut api_version = None;
     let mut description = None;
     let mut arguments = Vec::new();
     let mut capabilities = Capabilities::default();
+    let mut tools = Vec::new();
     let mut run = None;
     for pair in table.pairs::<String, Value>() {
         let (key, value) =
@@ -23,16 +29,12 @@ pub(super) fn convert(table: &Table) -> Result<(CommandDeclaration, Function)> {
             "description" => description = Some(read_string(&value, "description")?),
             "arguments" => arguments = read_arguments(&value)?,
             "capabilities" => capabilities = read_capabilities(&value)?,
+            "tools" => tools = read_tools(&value)?,
             "run" => {
                 run =
                     Some(value.as_function().cloned().ok_or_else(|| {
                         error::invalid("declaration field `run` must be a function")
                     })?);
-            }
-            "tools" => {
-                return Err(error::unsupported(
-                    "tool declarations are not supported yet",
-                ));
             }
             "exemptions" => {
                 return Err(error::unsupported(
@@ -50,46 +52,102 @@ pub(super) fn convert(table: &Table) -> Result<(CommandDeclaration, Function)> {
         api_version.ok_or_else(|| error::invalid("declaration is missing `api_version`"))?;
     let description =
         description.ok_or_else(|| error::invalid("declaration is missing `description`"))?;
-    let declaration = CommandDeclaration::new(api_version, description, arguments, capabilities)?;
+    let (protocols, callbacks): (Vec<_>, Vec<_>) = tools.into_iter().unzip();
+    let declaration =
+        CommandDeclaration::new(api_version, description, arguments, capabilities, protocols)?;
     let run = run.ok_or_else(|| error::invalid("declaration is missing `run`"))?;
-    Ok((declaration, run))
+    Ok((declaration, run, callbacks))
 }
 
 fn read_arguments(value: &Value) -> Result<Vec<Argument>> {
+    indexed_tables(value, "arguments", MAX_ARGUMENTS)?
+        .iter()
+        .map(read_argument)
+        .collect()
+}
+
+fn read_tools(value: &Value) -> Result<Vec<(ToolDeclaration, Function)>> {
+    indexed_tables(value, "tools", MAX_TOOLS)?
+        .iter()
+        .map(read_tool)
+        .collect()
+}
+
+fn indexed_tables(value: &Value, field: &str, max: usize) -> Result<Vec<Table>> {
     let table = value
         .as_table()
-        .ok_or_else(|| error::invalid("declaration field `arguments` must be an array"))?;
-    if table.raw_len() > MAX_ARGUMENTS {
+        .ok_or_else(|| error::invalid(format!("`{field}` must be an array")))?;
+    if table.raw_len() > max {
         return Err(error::invalid(format!(
-            "a command may declare at most {MAX_ARGUMENTS} arguments"
+            "a command may declare at most {max} {field}"
         )));
     }
     let mut entries = Vec::new();
     for pair in table.pairs::<Value, Value>() {
         let (key, value) =
-            pair.map_err(|error| error::invalid(format!("invalid arguments: {error}")))?;
+            pair.map_err(|error| error::invalid(format!("invalid `{field}`: {error}")))?;
         let index = match key {
             Value::Integer(index) if index >= 1 => index,
-            _ => return Err(error::invalid("`arguments` must be an array of tables")),
+            _ => return Err(error::invalid(format!("`{field}` must be an array"))),
         };
         let entry = value
             .as_table()
             .cloned()
-            .ok_or_else(|| error::invalid("each `arguments` entry must be a table"))?;
+            .ok_or_else(|| error::invalid(format!("each `{field}` entry must be a table")))?;
         entries.push((index, entry));
     }
     entries.sort_by_key(|(index, _)| *index);
     for (position, (index, _)) in entries.iter().enumerate() {
         if *index != position as i64 + 1 {
-            return Err(error::invalid(
-                "`arguments` entries must be contiguous starting at 1",
-            ));
+            return Err(error::invalid(format!(
+                "`{field}` entries must be contiguous starting at 1"
+            )));
         }
     }
-    entries
-        .into_iter()
-        .map(|(_, entry)| read_argument(&entry))
-        .collect()
+    Ok(entries.into_iter().map(|(_, entry)| entry).collect())
+}
+
+fn read_tool(table: &Table) -> Result<(ToolDeclaration, Function)> {
+    let mut name = None;
+    let mut description = None;
+    let mut parameters = None;
+    let mut result = None;
+    let mut callback = None;
+    for pair in table.pairs::<String, Value>() {
+        let (key, value) =
+            pair.map_err(|error| error::invalid(format!("invalid tool: {error}")))?;
+        match key.as_str() {
+            "name" => name = Some(read_string(&value, "tool name")?),
+            "description" => description = Some(read_string(&value, "tool description")?),
+            "parameters" => parameters = Some(json::to_json(&value, &JsonLimits::default())?),
+            "result" => result = Some(json::to_json(&value, &JsonLimits::default())?),
+            "run" => {
+                callback = Some(
+                    value
+                        .as_function()
+                        .cloned()
+                        .ok_or_else(|| error::invalid("tool field `run` must be a function"))?,
+                );
+            }
+            other => return Err(error::invalid(format!("unknown tool field {other:?}"))),
+        }
+    }
+    let name = name.ok_or_else(|| error::invalid("a tool is missing `name`"))?;
+    let description = description
+        .ok_or_else(|| error::invalid(format!("tool {name:?} is missing `description`")))?;
+    let parameters = parameters
+        .ok_or_else(|| error::invalid(format!("tool {name:?} is missing `parameters`")))?;
+    let callback =
+        callback.ok_or_else(|| error::invalid(format!("tool {name:?} is missing `run`")))?;
+    Ok((
+        ToolDeclaration {
+            name,
+            description,
+            parameters,
+            result,
+        },
+        callback,
+    ))
 }
 
 fn read_argument(table: &Table) -> Result<Argument> {

@@ -5,22 +5,25 @@
 //! `koru check` and the future workflow runtime.
 use crate::{
     error::{ErrorCode, KoruError, Result},
+    json::JsonValue,
     source::names,
 };
 use std::collections::BTreeSet;
+
+pub use crate::json::MAX_SAFE_INTEGER;
 
 /// Maximum bytes in a declaration description.
 pub const MAX_DESCRIPTION_BYTES: usize = 1024;
 /// Maximum number of declared arguments.
 pub const MAX_ARGUMENTS: usize = 32;
+/// Maximum number of declared tools.
+pub const MAX_TOOLS: usize = 32;
 /// Maximum values in one enum argument.
 pub const MAX_ENUM_VALUES: usize = 64;
 /// Maximum bytes in argument help text.
 pub const MAX_HELP_BYTES: usize = 1024;
 /// Maximum bytes in a string default or enum value.
 pub const MAX_VALUE_BYTES: usize = 4096;
-/// Largest portable integer a declaration may use, per the JSON number range.
-pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 
 /// A validated API version 1 command declaration.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +32,7 @@ pub struct CommandDeclaration {
     description: String,
     arguments: Vec<Argument>,
     capabilities: Capabilities,
+    tools: Vec<ToolDeclaration>,
 }
 impl CommandDeclaration {
     /// Validate and construct a declaration from already-parsed parts.
@@ -37,6 +41,7 @@ impl CommandDeclaration {
         description: impl Into<String>,
         arguments: Vec<Argument>,
         capabilities: Capabilities,
+        tools: Vec<ToolDeclaration>,
     ) -> Result<Self> {
         if api_version != crate::API_VERSION {
             return Err(KoruError::new(
@@ -62,11 +67,28 @@ impl CommandDeclaration {
                 ));
             }
         }
+        if tools.len() > MAX_TOOLS {
+            return Err(KoruError::new(
+                ErrorCode::Validation,
+                format!("a command may declare at most {MAX_TOOLS} tools"),
+            ));
+        }
+        let mut tool_names = BTreeSet::new();
+        for tool in &tools {
+            tool.validate()?;
+            if !tool_names.insert(tool.name.as_str()) {
+                return Err(KoruError::new(
+                    ErrorCode::Validation,
+                    format!("duplicate tool name {:?}", tool.name),
+                ));
+            }
+        }
         Ok(Self {
             api_version,
             description,
             arguments,
             capabilities,
+            tools,
         })
     }
     /// The declared API version, always [`crate::API_VERSION`] when valid.
@@ -84,6 +106,54 @@ impl CommandDeclaration {
     /// Capabilities requested by the script; never a grant.
     pub fn capabilities(&self) -> Capabilities {
         self.capabilities
+    }
+    /// Declared tools in order; callbacks are retained by the Lua adapter.
+    pub fn tools(&self) -> &[ToolDeclaration] {
+        &self.tools
+    }
+}
+
+/// A validated tool declaration; the callback is retained by the Lua adapter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolDeclaration {
+    /// Unique portable tool name.
+    pub name: String,
+    /// Human-readable description.
+    pub description: String,
+    /// JSON schema document for the tool arguments.
+    pub parameters: JsonValue,
+    /// Optional JSON schema document for the tool result.
+    pub result: Option<JsonValue>,
+}
+impl ToolDeclaration {
+    fn validate(&self) -> Result<()> {
+        if !names::identifier(&self.name) {
+            return Err(KoruError::new(
+                ErrorCode::Validation,
+                format!("invalid tool name {:?}", self.name),
+            ));
+        }
+        validate_text(
+            "tool description",
+            &self.description,
+            MAX_DESCRIPTION_BYTES,
+            true,
+        )?;
+        if !matches!(self.parameters, JsonValue::Object(_)) {
+            return Err(KoruError::new(
+                ErrorCode::Validation,
+                format!("tool {:?} parameters must be a JSON object", self.name),
+            ));
+        }
+        if let Some(result) = &self.result
+            && !matches!(result, JsonValue::Object(_))
+        {
+            return Err(KoruError::new(
+                ErrorCode::Validation,
+                format!("tool {:?} result must be a JSON object", self.name),
+            ));
+        }
+        Ok(())
     }
 }
 

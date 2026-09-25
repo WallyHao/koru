@@ -71,6 +71,14 @@ impl Sandbox {
         self.context.ensure_active(Instant::now())?;
         Ok(value)
     }
+    /// The execution context bound to this VM.
+    pub(super) fn context(&self) -> &ExecutionContext {
+        &self.context
+    }
+    /// Consume the sandbox, keeping the VM alive for workflow execution.
+    pub(super) fn into_lua(self) -> Lua {
+        self.lua
+    }
     #[cfg(test)]
     pub(super) fn lua(&self) -> &Lua {
         &self.lua

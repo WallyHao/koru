@@ -2,9 +2,10 @@
 use koru::{
     declaration::{
         Argument, ArgumentType, ArgumentValue, Capabilities, CommandDeclaration,
-        MAX_DESCRIPTION_BYTES, MAX_SAFE_INTEGER,
+        MAX_DESCRIPTION_BYTES, MAX_SAFE_INTEGER, MAX_TOOLS, ToolDeclaration,
     },
     error::{ErrorCode, Result},
+    json::JsonValue,
 };
 
 fn argument(name: &str, kind: ArgumentType) -> Argument {
@@ -20,7 +21,7 @@ fn argument(name: &str, kind: ArgumentType) -> Argument {
     }
 }
 fn build(arguments: Vec<Argument>) -> Result<CommandDeclaration> {
-    CommandDeclaration::new(1, "demo", arguments, Capabilities::default())
+    CommandDeclaration::new(1, "demo", arguments, Capabilities::default(), Vec::new())
 }
 fn code(result: Result<CommandDeclaration>) -> ErrorCode {
     result.unwrap_err().code()
@@ -39,9 +40,15 @@ fn accepts_a_minimal_declaration() {
 fn rejects_unsupported_api_versions() {
     for version in [0, 2, u32::MAX] {
         assert_eq!(
-            CommandDeclaration::new(version, "demo", Vec::new(), Capabilities::default())
-                .unwrap_err()
-                .code(),
+            CommandDeclaration::new(
+                version,
+                "demo",
+                Vec::new(),
+                Capabilities::default(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .code(),
             ErrorCode::UnsupportedCapability
         );
     }
@@ -55,9 +62,15 @@ fn rejects_missing_or_malformed_descriptions() {
         "x".repeat(MAX_DESCRIPTION_BYTES + 1),
     ] {
         assert_eq!(
-            CommandDeclaration::new(1, description, Vec::new(), Capabilities::default())
-                .unwrap_err()
-                .code(),
+            CommandDeclaration::new(
+                1,
+                description,
+                Vec::new(),
+                Capabilities::default(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .code(),
             ErrorCode::Validation
         );
     }
@@ -181,7 +194,70 @@ fn carries_requested_capabilities_without_granting_them() {
         Capabilities {
             direct_processes: true,
         },
+        Vec::new(),
     )
     .unwrap();
     assert!(declaration.capabilities().direct_processes);
+}
+
+fn tool(name: &str) -> ToolDeclaration {
+    ToolDeclaration {
+        name: name.to_owned(),
+        description: "does a thing".to_owned(),
+        parameters: JsonValue::Object(Default::default()),
+        result: None,
+    }
+}
+fn build_with_tools(tools: Vec<ToolDeclaration>) -> Result<CommandDeclaration> {
+    CommandDeclaration::new(1, "demo", Vec::new(), Capabilities::default(), tools)
+}
+
+#[test]
+fn accepts_valid_tools() {
+    let declaration = build_with_tools(vec![tool("first"), tool("second")]).unwrap();
+    assert_eq!(declaration.tools().len(), 2);
+    assert_eq!(declaration.tools()[0].name, "first");
+}
+
+#[test]
+fn rejects_duplicate_or_malformed_tool_names() {
+    assert_eq!(
+        build_with_tools(vec![tool("same"), tool("same")])
+            .unwrap_err()
+            .code(),
+        ErrorCode::Validation
+    );
+    for name in ["Bad", "", "1tool"] {
+        assert_eq!(
+            build_with_tools(vec![tool(name)]).unwrap_err().code(),
+            ErrorCode::Validation
+        );
+    }
+}
+
+#[test]
+fn rejects_non_object_tool_schemas() {
+    let mut parameters = tool("t");
+    parameters.parameters = JsonValue::String("nope".to_owned());
+    assert_eq!(
+        build_with_tools(vec![parameters]).unwrap_err().code(),
+        ErrorCode::Validation
+    );
+    let mut result = tool("t");
+    result.result = Some(JsonValue::Bool(true));
+    assert_eq!(
+        build_with_tools(vec![result]).unwrap_err().code(),
+        ErrorCode::Validation
+    );
+}
+
+#[test]
+fn rejects_too_many_tools() {
+    let tools = (0..=MAX_TOOLS)
+        .map(|index| tool(&format!("t{index}")))
+        .collect();
+    assert_eq!(
+        build_with_tools(tools).unwrap_err().code(),
+        ErrorCode::Validation
+    );
 }
